@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import type { McpFunctionCall } from "@shared/schema";
 import { McpClient } from "./mcp-client";
 
-// the newest OpenAI model is "gpt-5" which was released August 7, 2025. do not change this unless explicitly requested by the user
+// User requested gpt-4o model
 function getOpenAIClient(): OpenAI {
   if (!process.env.OPENAI_API_KEY) {
     throw new Error("OpenAI API key not configured. Please add your OPENAI_API_KEY to secrets.");
@@ -27,9 +27,18 @@ export class Orchestrator {
   }
 
   async initialize(): Promise<void> {
-    await this.onLog("info", "Initializing orchestrator...");
-    this.tools = await this.mcpClient.listTools();
-    await this.onLog("success", `Loaded ${this.tools.length} MCP tools`);
+    await this.onLog("info", "Initializing orchestrator and connecting to MCP server...");
+    try {
+      this.tools = await this.mcpClient.listTools();
+      if (this.tools.length > 0) {
+        await this.onLog("success", `Loaded ${this.tools.length} MCP tools`);
+      } else {
+        await this.onLog("warning", "No tools available from MCP server");
+      }
+    } catch (error) {
+      await this.onLog("error", `Failed to initialize: ${error instanceof Error ? error.message : "Unknown error"}`);
+      throw error;
+    }
   }
 
   cancel(): void {
@@ -45,20 +54,24 @@ export class Orchestrator {
       await this.initialize();
       await this.onLog("info", `Executing task: ${prompt}`);
 
-      const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-        {
-          role: "system",
-          content: `You are a browser automation orchestrator. You have access to browser automation tools via MCP (Model Context Protocol).
-          
+      const systemPrompt = `You are a browser automation orchestrator. You have access to browser automation tools via MCP (Model Context Protocol).
+
 Your job is to:
 1. Understand the user's automation task
 2. Break it down into a series of browser actions
 3. Call the appropriate MCP functions in the correct order
-4. Return the final result
+4. Always pass the flowState returned from each call to the next call to maintain the browser session
+5. Return the final result
 
-Available tools: ${JSON.stringify(this.tools, null, 2)}
+Available tools:
+${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools currently available. Try to help the user understand what went wrong."}
 
-Be methodical and explain each step you're taking.`,
+IMPORTANT: The flowState is critical for session continuity. Every tool response includes a flowState that you must pass to the next tool call.`;
+
+      const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+        {
+          role: "system",
+          content: systemPrompt,
         },
         {
           role: "user",
@@ -83,7 +96,7 @@ Be methodical and explain each step you're taking.`,
 
         const openai = getOpenAIClient();
         const response = await openai.chat.completions.create({
-          model: "gpt-5",
+          model: "gpt-4o",
           messages,
           tools: tools.length > 0 ? tools : undefined,
           max_completion_tokens: 4096,
@@ -102,6 +115,7 @@ Be methodical and explain each step you're taking.`,
 
         if (message.tool_calls && message.tool_calls.length > 0) {
           for (const toolCall of message.tool_calls) {
+            if (!("function" in toolCall)) continue;
             const functionName = toolCall.function.name;
             const functionArgs = JSON.parse(toolCall.function.arguments);
 
@@ -124,10 +138,16 @@ Be methodical and explain each step you're taking.`,
               });
             } else {
               await this.onLog("success", `Function ${functionName} completed successfully`);
+              // Include flowState info in the tool response
+              const toolResponse = {
+                success: true,
+                result: result.result,
+                ...(result.flowState && { flowState: result.flowState }),
+              };
               messages.push({
                 role: "tool",
                 tool_call_id: toolCall.id,
-                content: JSON.stringify(result.result || { success: true }),
+                content: JSON.stringify(toolResponse),
               });
             }
           }
@@ -147,6 +167,8 @@ Be methodical and explain each step you're taking.`,
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       await this.onLog("error", `Task failed: ${errorMessage}`);
       return { success: false, error: errorMessage };
+    } finally {
+      await this.mcpClient.close();
     }
   }
 }

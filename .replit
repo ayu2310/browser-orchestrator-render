@@ -15,6 +15,10 @@ localPort = 5000
 externalPort = 80
 
 [[ports]]
+localPort = 34813
+externalPort = 3001
+
+[[ports]]
 localPort = 40307
 externalPort = 3000
 
@@ -44,3 +48,8 @@ waitForPort = 5000
 
 [agent]
 integrations = ["javascript_openai:1.0.0", "javascript_websocket:1.0.0"]
+
+[userenv]
+
+[userenv.shared]
+MCP_SERVER_URL = "https://browserbase-mcp-server-iub9cl6kc-ayus-projects-56bd70c3.vercel.app/api/mcp"
