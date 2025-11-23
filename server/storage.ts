@@ -1,37 +1,78 @@
-import { type User, type InsertUser } from "@shared/schema";
+import { type Task, type LogEntry } from "@shared/schema";
 import { randomUUID } from "crypto";
 
-// modify the interface with any CRUD methods
-// you might need
-
 export interface IStorage {
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  createTask(prompt: string): Promise<Task>;
+  getTask(id: string): Promise<Task | undefined>;
+  updateTask(id: string, updates: Partial<Task>): Promise<Task | undefined>;
+  getAllTasks(): Promise<Task[]>;
+  getCurrentTask(): Promise<Task | null>;
+  
+  addLog(log: Omit<LogEntry, "id">): Promise<LogEntry>;
+  getTaskLogs(taskId: string): Promise<LogEntry[]>;
 }
 
 export class MemStorage implements IStorage {
-  private users: Map<string, User>;
+  private tasks: Map<string, Task>;
+  private logs: Map<string, LogEntry>;
+  private currentTaskId: string | null = null;
 
   constructor() {
-    this.users = new Map();
+    this.tasks = new Map();
+    this.logs = new Map();
   }
 
-  async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
-  }
-
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
-  }
-
-  async createUser(insertUser: InsertUser): Promise<User> {
+  async createTask(prompt: string): Promise<Task> {
     const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
-    return user;
+    const task: Task = {
+      id,
+      prompt,
+      status: "running",
+      createdAt: Date.now(),
+    };
+    this.tasks.set(id, task);
+    this.currentTaskId = id;
+    return task;
+  }
+
+  async getTask(id: string): Promise<Task | undefined> {
+    return this.tasks.get(id);
+  }
+
+  async updateTask(id: string, updates: Partial<Task>): Promise<Task | undefined> {
+    const task = this.tasks.get(id);
+    if (!task) return undefined;
+    
+    const updated = { ...task, ...updates };
+    this.tasks.set(id, updated);
+    
+    if (updated.status === "completed" || updated.status === "failed") {
+      this.currentTaskId = null;
+    }
+    
+    return updated;
+  }
+
+  async getAllTasks(): Promise<Task[]> {
+    return Array.from(this.tasks.values()).sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  async getCurrentTask(): Promise<Task | null> {
+    if (!this.currentTaskId) return null;
+    return this.tasks.get(this.currentTaskId) || null;
+  }
+
+  async addLog(log: Omit<LogEntry, "id">): Promise<LogEntry> {
+    const id = randomUUID();
+    const logEntry: LogEntry = { ...log, id };
+    this.logs.set(id, logEntry);
+    return logEntry;
+  }
+
+  async getTaskLogs(taskId: string): Promise<LogEntry[]> {
+    return Array.from(this.logs.values())
+      .filter((log) => log.taskId === taskId)
+      .sort((a, b) => a.timestamp - b.timestamp);
   }
 }
 
