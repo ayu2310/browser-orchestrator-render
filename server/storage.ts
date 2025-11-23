@@ -64,7 +64,20 @@ export class MemStorage implements IStorage {
 
   async addLog(log: Omit<LogEntry, "id">): Promise<LogEntry> {
     const id = randomUUID();
-    const logEntry: LogEntry = { ...log, id };
+    // Extract screenshot from details if present
+    let screenshot: string | undefined = undefined;
+    if (log.details && typeof log.details === 'object' && 'screenshot' in log.details) {
+      screenshot = (log.details as any).screenshot;
+    }
+    
+    const logEntry: LogEntry = { 
+      ...log, 
+      id,
+      screenshot,
+      details: log.details && typeof log.details === 'object' && 'screenshot' in log.details 
+        ? Object.fromEntries(Object.entries(log.details as any).filter(([k]) => k !== 'screenshot'))
+        : log.details,
+    };
     this.logs.set(id, logEntry);
     return logEntry;
   }

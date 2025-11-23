@@ -61,12 +61,20 @@ Your job is to:
 2. Break it down into a series of browser actions
 3. Call the appropriate MCP functions in the correct order
 4. Always pass the flowState returned from each call to the next call to maintain the browser session
-5. Return the final result
+5. After each action (navigate, click, fill, etc), take a screenshot using browserbase_screenshot to see the current state
+6. Analyze the screenshot to determine the next action needed
+7. Repeat until the task is complete
+
+Important Guidelines:
+- ALWAYS take a screenshot after navigation or any action to see the current state
+- Use screenshots to identify elements to click, text to find, form fields to fill
+- Reference what you see in screenshots when deciding what to do next
+- The flowState is critical for session continuity - pass it with every tool call
+- Be persistent: if an action fails, try alternative approaches based on what you see in the screenshot
+- When you see the desired result in a screenshot, report success
 
 Available tools:
-${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools currently available. Try to help the user understand what went wrong."}
-
-IMPORTANT: The flowState is critical for session continuity. Every tool response includes a flowState that you must pass to the next tool call.`;
+${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools currently available. Try to help the user understand what went wrong."}`;
 
       const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
         {
@@ -138,6 +146,23 @@ IMPORTANT: The flowState is critical for session continuity. Every tool response
               });
             } else {
               await this.onLog("success", `Function ${functionName} completed successfully`);
+              
+              // Automatically take a screenshot after actions to see current state
+              if (["browserbase_stagehand_act", "browserbase_stagehand_navigate"].includes(functionName)) {
+                const screenshotResult = await this.mcpClient.callFunction({
+                  function: "browserbase_screenshot",
+                  arguments: { flowState: result.flowState },
+                });
+                
+                if (!screenshotResult.error && screenshotResult.result) {
+                  const screenshotText = screenshotResult.result;
+                  const screenshotMatch = screenshotText.match(/data:image\/[^;\s]+;base64,[A-Za-z0-9+/=]+/);
+                  if (screenshotMatch) {
+                    await this.onLog("info", "Screenshot captured", { screenshot: screenshotMatch[0] });
+                  }
+                }
+              }
+              
               // Include flowState info in the tool response
               const toolResponse = {
                 success: true,

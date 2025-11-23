@@ -346,11 +346,36 @@ function LogLine({ log }: { log: LogEntry }) {
     second: "2-digit",
   });
 
+  const [showScreenshot, setShowScreenshot] = useState(false);
+
   return (
-    <div className="flex gap-2 items-start" data-testid={`log-${log.level}`}>
-      <span className="text-xs text-muted-foreground shrink-0">{timestamp}</span>
-      <Icon className={`w-4 h-4 shrink-0 mt-0.5 ${color}`} />
-      <span className={`text-xs ${color} break-all`}>{log.message}</span>
+    <div className="flex flex-col gap-2 items-start" data-testid={`log-${log.level}`}>
+      <div className="flex gap-2 items-start w-full">
+        <span className="text-xs text-muted-foreground shrink-0">{timestamp}</span>
+        <Icon className={`w-4 h-4 shrink-0 mt-0.5 ${color}`} />
+        <span className={`text-xs ${color} break-all flex-1`}>{log.message}</span>
+        {log.screenshot && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-xs h-6 px-2 shrink-0"
+            onClick={() => setShowScreenshot(!showScreenshot)}
+            data-testid={`button-screenshot-${log.id}`}
+          >
+            {showScreenshot ? "Hide" : "View"} Screenshot
+          </Button>
+        )}
+      </div>
+      {showScreenshot && log.screenshot && (
+        <div className="w-full mt-2 rounded-md border overflow-hidden bg-black/5 dark:bg-white/5">
+          <img
+            src={log.screenshot}
+            alt="Browser screenshot"
+            className="w-full h-auto"
+            data-testid={`img-screenshot-${log.id}`}
+          />
+        </div>
+      )}
     </div>
   );
 }

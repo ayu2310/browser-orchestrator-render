@@ -13,6 +13,7 @@ export const logEntrySchema = z.object({
   level: logLevelSchema,
   message: z.string(),
   details: z.any().optional(),
+  screenshot: z.string().optional(),
 });
 export type LogEntry = z.infer<typeof logEntrySchema>;
 
