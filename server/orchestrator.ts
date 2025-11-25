@@ -68,15 +68,14 @@ Your job is to:
 3. Call the appropriate MCP functions in the correct order
 4. The sessionId is automatically managed - just call functions normally
 5. After each action (navigate, click, fill, etc), take a screenshot to see the current state
-6. Analyze the screenshot to determine the next action needed
+6. Analyze the screenshot feedback to determine the next action needed
 7. Repeat until the task is complete
 
 Important Guidelines:
 - ALWAYS take a screenshot after navigation or any action to see the current state
-- Use screenshots to identify elements to click, text to find, form fields to fill
-- Reference what you see in screenshots when deciding what to do next
-- Be persistent: if an action fails, try alternative approaches based on what you see in the screenshot
-- When you see the desired result in a screenshot, report success
+- Pay attention to screenshot feedback - it tells you what you need to do next
+- Be persistent: if an action fails, try alternative approaches
+- When you see the desired result, report success
 
 Available tools:
 ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools currently available. Try to help the user understand what went wrong."}`;
@@ -169,25 +168,26 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
                 if (!screenshotResult.error) {
                   if (screenshotResult.screenshot) {
                     console.log("[Orchestrator] Screenshot captured, logging to user");
-                    await this.onLog("info", "Screenshot captured", { screenshot: screenshotResult.screenshot });
-                  } else {
-                    console.log("[Orchestrator] No screenshot in response:", screenshotResult);
+                    // Log screenshot for UI but DON'T send base64 to GPT-4o (too expensive!)
+                    await this.onLog("info", "Screenshot captured for reference", { screenshot: screenshotResult.screenshot });
                   }
                 } else {
                   await this.onLog("warning", `Failed to capture screenshot: ${screenshotResult.error}`);
                 }
               }
               
-              // Include result and screenshot in the tool response so GPT can see what happened
+              // Build tool response WITHOUT embedding the screenshot
+              // GPT-4o just needs to know what happened, not the full screenshot data
               const toolResponse: any = {
                 success: true,
                 result: result.result,
               };
               
-              // If screenshot was captured in the function call itself, include it
+              // Important: Do NOT include the screenshot base64 in the message sent to GPT-4o
+              // Screenshots are logged for the UI but we send only text descriptions to GPT
+              // This prevents token explosion
               if (result.screenshot) {
-                toolResponse.screenshot = result.screenshot;
-                toolResponse.note = "Screenshot is available - use this to determine next actions";
+                toolResponse.note = "Screenshot captured and stored for your reference. Current page state has been captured.";
               }
               
               messages.push({
