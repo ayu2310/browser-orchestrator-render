@@ -2,7 +2,6 @@ import OpenAI from "openai";
 import type { McpFunctionCall } from "@shared/schema";
 import { McpClient } from "./mcp-client";
 
-// User requested gpt-4o model
 function getOpenAIClient(): OpenAI {
   if (!process.env.OPENAI_API_KEY) {
     throw new Error("OpenAI API key not configured. Please add your OPENAI_API_KEY to secrets.");
@@ -20,6 +19,7 @@ export class Orchestrator {
   private onLog: OrchestratorConfig["onLog"];
   private tools: any[] = [];
   private cancelled = false;
+  private sessionCreated = false;
 
   constructor(config: OrchestratorConfig) {
     this.mcpClient = config.mcpClient;
@@ -27,13 +27,13 @@ export class Orchestrator {
   }
 
   async initialize(): Promise<void> {
-    await this.onLog("info", "Initializing orchestrator and connecting to MCP server...");
+    await this.onLog("info", "Connecting to MCP server and loading tools...");
     try {
       this.tools = await this.mcpClient.listTools();
       if (this.tools.length > 0) {
         await this.onLog("success", `Loaded ${this.tools.length} MCP tools`);
       } else {
-        await this.onLog("warning", "No tools available from MCP server");
+        throw new Error("No tools available from MCP server");
       }
     } catch (error) {
       await this.onLog("error", `Failed to initialize: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -46,50 +46,35 @@ export class Orchestrator {
   }
 
   async execute(prompt: string): Promise<{ success: boolean; result?: any; error?: string }> {
-    let sessionId: string | null = null;
     try {
       if (!process.env.OPENAI_API_KEY) {
         throw new Error("OpenAI API key not configured. Please add your OPENAI_API_KEY to secrets.");
       }
 
       await this.initialize();
-      await this.onLog("info", `Executing task: ${prompt}`);
+      await this.onLog("info", `Starting task: ${prompt}`);
 
-      // Create a new browser session
-      await this.onLog("info", "Creating new browser session...");
-      sessionId = await this.mcpClient.createSession();
-      await this.onLog("success", `Browser session created: ${sessionId}`);
+      // Create browser session
+      await this.onLog("info", "Creating browser session...");
+      const sessionId = await this.mcpClient.createSession();
+      this.sessionCreated = true;
+      await this.onLog("success", `Browser session created`);
 
-      const systemPrompt = `You are a browser automation orchestrator. You have access to browser automation tools via MCP (Model Context Protocol).
+      const systemPrompt = `You are a browser automation expert. Use the provided MCP tools to complete the user's task.
 
-Your job is to:
-1. Understand the user's automation task
-2. Break it down into a series of browser actions
-3. Call the appropriate MCP functions in the correct order
-4. The sessionId is automatically managed - just call functions normally
-5. After each action (navigate, click, fill, etc), take a screenshot to see the current state
-6. Analyze the screenshot to determine the next action needed
-7. Repeat until the task is complete
+Guidelines:
+- Think through each step carefully
+- Always take a screenshot after navigation or actions to see the result
+- Use the screenshot to verify success and plan next steps
+- If something fails, try alternative approaches
+- Report when the task is complete
+- Keep actions simple and direct
 
-Important Guidelines:
-- ALWAYS take a screenshot after navigation or any action to see the current state
-- Use screenshots to identify elements to click, text to find, form fields to fill
-- Reference what you see in screenshots when deciding what to do next
-- Be persistent: if an action fails, try alternative approaches based on what you see in the screenshot
-- When you see the desired result in a screenshot, report success
-
-Available tools:
-${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools currently available. Try to help the user understand what went wrong."}`;
+Available tools will be shown in the function definitions below.`;
 
       const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-        {
-          role: "system",
-          content: systemPrompt,
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
+        { role: "system", content: systemPrompt },
+        { role: "user", content: prompt },
       ];
 
       const tools = this.tools.map((tool) => ({
@@ -102,7 +87,7 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
       }));
 
       let iterationCount = 0;
-      const maxIterations = 20;
+      const maxIterations = 15;
 
       while (iterationCount < maxIterations && !this.cancelled) {
         iterationCount++;
@@ -112,7 +97,7 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
           model: "gpt-4o",
           messages,
           tools: tools.length > 0 ? tools : undefined,
-          max_completion_tokens: 4096,
+          max_completion_tokens: 2048,
         });
 
         const message = response.choices[0].message;
@@ -126,83 +111,70 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
           throw new Error("Task cancelled by user");
         }
 
-        if (message.tool_calls && message.tool_calls.length > 0) {
-          for (const toolCall of message.tool_calls) {
-            if (!("function" in toolCall)) continue;
-            const functionName = toolCall.function.name;
-            const functionArgs = JSON.parse(toolCall.function.arguments);
+        // If no tool calls, task is complete
+        if (!message.tool_calls || message.tool_calls.length === 0) {
+          const result = message.content || "Task completed successfully";
+          await this.onLog("success", result);
+          return { success: true, result };
+        }
 
-            await this.onLog(
-              "info",
-              `Calling ${functionName} with args: ${JSON.stringify(functionArgs)}`
-            );
+        // Execute tool calls
+        for (const toolCall of message.tool_calls) {
+          if (!("function" in toolCall)) continue;
 
-            const result = await this.mcpClient.callFunction({
-              function: functionName,
-              arguments: functionArgs,
+          const functionName = toolCall.function.name;
+          const functionArgs = JSON.parse(toolCall.function.arguments);
+
+          await this.onLog("info", `Executing: ${functionName}`);
+
+          const result = await this.mcpClient.callFunction({
+            function: functionName,
+            arguments: functionArgs,
+          });
+
+          if (result.error) {
+            await this.onLog("error", `${functionName} failed: ${result.error}`);
+            messages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: JSON.stringify({ error: result.error }),
             });
+          } else {
+            await this.onLog("success", `${functionName} completed`);
 
-            if (result.error) {
-              await this.onLog("error", `Function ${functionName} failed: ${result.error}`);
-              messages.push({
-                role: "tool",
-                tool_call_id: toolCall.id,
-                content: JSON.stringify({ error: result.error }),
-              });
-            } else {
-              await this.onLog("success", `Function ${functionName} completed successfully`);
-              
-              // Update sessionId if returned from call
-              if (result.sessionId && !sessionId) {
-                sessionId = result.sessionId;
-              }
-
-              // Automatically take a screenshot after navigation or action to see current state
-              if (["browserbase_stagehand_act", "browserbase_stagehand_navigate"].includes(functionName)) {
-                await this.onLog("info", "Taking screenshot to see current state...");
-                const screenshotResult = await this.mcpClient.callFunction({
-                  function: "browserbase_screenshot",
-                  arguments: {},
-                });
-                
-                if (!screenshotResult.error && screenshotResult.screenshot) {
-                  await this.onLog("info", "Screenshot captured", { screenshot: screenshotResult.screenshot });
-                }
-              }
-              
-              // Include result in the tool response
-              const toolResponse = {
-                success: true,
-                result: result.result,
-              };
-              messages.push({
-                role: "tool",
-                tool_call_id: toolCall.id,
-                content: JSON.stringify(toolResponse),
-              });
+            // If screenshot captured, log it
+            if (result.screenshot) {
+              await this.onLog("info", "Screenshot captured", { screenshot: result.screenshot });
             }
+
+            messages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: JSON.stringify({ success: true, result: result.result }),
+            });
           }
-        } else {
-          const finalResult = message.content || "Task completed";
-          await this.onLog("success", `Task completed: ${finalResult}`);
-          return { success: true, result: finalResult };
         }
       }
 
       if (iterationCount >= maxIterations) {
-        throw new Error("Max iterations reached");
+        throw new Error("Task reached maximum iterations");
       }
 
       return { success: true, result: "Task completed" };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      await this.onLog("error", `Task failed: ${errorMessage}`);
+      await this.onLog("error", errorMessage);
       return { success: false, error: errorMessage };
     } finally {
-      // Close the browser session
-      if (sessionId) {
+      // Always close the session
+      if (this.sessionCreated) {
         await this.onLog("info", "Closing browser session...");
-        await this.mcpClient.close();
+        try {
+          await this.mcpClient.close();
+          await this.onLog("success", "Browser session closed");
+        } catch (error) {
+          await this.onLog("error", `Failed to close session: ${error instanceof Error ? error.message : "Unknown error"}`);
+        }
       }
     }
   }
