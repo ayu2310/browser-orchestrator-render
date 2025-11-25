@@ -106,6 +106,7 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
 
       while (iterationCount < maxIterations && !this.cancelled) {
         iterationCount++;
+        console.log(`[Orchestrator] Iteration ${iterationCount}/${maxIterations}`);
 
         const openai = getOpenAIClient();
         const response = await openai.chat.completions.create({
@@ -165,16 +166,30 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
                   arguments: {},
                 });
                 
-                if (!screenshotResult.error && screenshotResult.screenshot) {
-                  await this.onLog("info", "Screenshot captured", { screenshot: screenshotResult.screenshot });
+                if (!screenshotResult.error) {
+                  if (screenshotResult.screenshot) {
+                    console.log("[Orchestrator] Screenshot captured, logging to user");
+                    await this.onLog("info", "Screenshot captured", { screenshot: screenshotResult.screenshot });
+                  } else {
+                    console.log("[Orchestrator] No screenshot in response:", screenshotResult);
+                  }
+                } else {
+                  await this.onLog("warning", `Failed to capture screenshot: ${screenshotResult.error}`);
                 }
               }
               
-              // Include result in the tool response
-              const toolResponse = {
+              // Include result and screenshot in the tool response so GPT can see what happened
+              const toolResponse: any = {
                 success: true,
                 result: result.result,
               };
+              
+              // If screenshot was captured in the function call itself, include it
+              if (result.screenshot) {
+                toolResponse.screenshot = result.screenshot;
+                toolResponse.note = "Screenshot is available - use this to determine next actions";
+              }
+              
               messages.push({
                 role: "tool",
                 tool_call_id: toolCall.id,
