@@ -64,13 +64,16 @@ export class Orchestrator {
 
 Guidelines:
 - Think through each step carefully
-- Always take a screenshot after navigation or actions to see the result
-- Use the screenshot to verify success and plan next steps
-- If something fails, try alternative approaches
-- Report when the task is complete
+- ALWAYS take a screenshot after navigation or any action to see the result
+- Examine each screenshot carefully to understand the current state
+- Use screenshots to verify success and plan precisely what to do next
+- Never assume an action worked - always verify with screenshots
+- If something fails, analyze the screenshot to understand why and try alternative approaches
+- Report when the task is complete with evidence from screenshots
 - Keep actions simple and direct
+- When you receive a tool result with a screenshot, analyze it before deciding the next step
 
-Available tools will be shown in the function definitions below.`;
+Important: Screenshots are essential for your planning. Always request or take screenshots after actions to see the current state of the browser before proceeding.`;
 
       const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
         { role: "system", content: systemPrompt },
@@ -142,15 +145,21 @@ Available tools will be shown in the function definitions below.`;
           } else {
             await this.onLog("success", `${functionName} completed`);
 
-            // If screenshot captured, log it
+            // If screenshot captured, log it and include in message
             if (result.screenshot) {
               await this.onLog("info", "Screenshot captured", { screenshot: result.screenshot });
+            }
+
+            // Include screenshot in tool message for AI to see and plan from
+            const toolResult: any = { success: true, result: result.result };
+            if (result.screenshot) {
+              toolResult.screenshot = result.screenshot;
             }
 
             messages.push({
               role: "tool",
               tool_call_id: toolCall.id,
-              content: JSON.stringify({ success: true, result: result.result }),
+              content: JSON.stringify(toolResult),
             });
           }
         }
