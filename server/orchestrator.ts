@@ -20,6 +20,7 @@ export class Orchestrator {
   private onLog: OrchestratorConfig["onLog"];
   private tools: any[] = [];
   private cancelled = false;
+  private lastScreenshot: string | null = null;
 
   constructor(config: OrchestratorConfig) {
     this.mcpClient = config.mcpClient;
@@ -68,14 +69,15 @@ Your job is to:
 3. Call the appropriate MCP functions in the correct order
 4. The sessionId is automatically managed - just call functions normally
 5. After each action (navigate, click, fill, etc), take a screenshot to see the current state
-6. Analyze the screenshot feedback to determine the next action needed
+6. Look at the screenshot images provided to determine the next action needed
 7. Repeat until the task is complete
 
 Important Guidelines:
 - ALWAYS take a screenshot after navigation or any action to see the current state
-- Pay attention to screenshot feedback - it tells you what you need to do next
-- Be persistent: if an action fails, try alternative approaches
-- When you see the desired result, report success
+- Pay close attention to the screenshot images provided - they show you what's on screen
+- Use the visual information to identify elements to click, text to find, form fields to fill
+- Be persistent: if an action fails, try alternative approaches based on what you see
+- When you see the desired result in the screenshot, report success
 
 Available tools:
 ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools currently available. Try to help the user understand what went wrong."}`;
@@ -147,7 +149,7 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
               messages.push({
                 role: "tool",
                 tool_call_id: toolCall.id,
-                content: JSON.stringify({ error: result.error }),
+                content: `Error: ${result.error}`,
               });
             } else {
               await this.onLog("success", `Function ${functionName} completed successfully`);
@@ -158,6 +160,7 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
               }
 
               // Automatically take a screenshot after navigation or action to see current state
+              let screenshotData: string | null = null;
               if (["browserbase_stagehand_act", "browserbase_stagehand_navigate"].includes(functionName)) {
                 await this.onLog("info", "Taking screenshot to see current state...");
                 const screenshotResult = await this.mcpClient.callFunction({
@@ -167,34 +170,52 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
                 
                 if (!screenshotResult.error) {
                   if (screenshotResult.screenshot) {
-                    console.log("[Orchestrator] Screenshot captured, logging to user");
-                    // Log screenshot for UI but DON'T send base64 to GPT-4o (too expensive!)
-                    await this.onLog("info", "Screenshot captured for reference", { screenshot: screenshotResult.screenshot });
+                    screenshotData = screenshotResult.screenshot;
+                    this.lastScreenshot = screenshotData;
+                    console.log("[Orchestrator] Screenshot captured, logging to user and sending to LLM");
+                    // Log screenshot for UI display
+                    await this.onLog("info", "Screenshot captured", { screenshot: screenshotData });
                   }
                 } else {
                   await this.onLog("warning", `Failed to capture screenshot: ${screenshotResult.error}`);
                 }
               }
               
-              // Build tool response WITHOUT embedding the screenshot
-              // GPT-4o just needs to know what happened, not the full screenshot data
-              const toolResponse: any = {
-                success: true,
-                result: result.result,
-              };
-              
-              // Important: Do NOT include the screenshot base64 in the message sent to GPT-4o
-              // Screenshots are logged for the UI but we send only text descriptions to GPT
-              // This prevents token explosion
-              if (result.screenshot) {
-                toolResponse.note = "Screenshot captured and stored for your reference. Current page state has been captured.";
-              }
+              // Send tool result - include screenshot reference in text so GPT knows we captured it
+              const resultMessage = screenshotData 
+                ? `Success. Result: ${result.result || "Action completed"}. Screenshot captured and shown below.`
+                : `Success. Result: ${result.result || "Action completed"}`;
               
               messages.push({
                 role: "tool",
                 tool_call_id: toolCall.id,
-                content: JSON.stringify(toolResponse),
+                content: resultMessage,
               });
+              
+              // If we have a screenshot, add it as the next user message so GPT can see it
+              if (screenshotData) {
+                // Ensure we have proper data URL format
+                let imageUrl = screenshotData;
+                if (!screenshotData.startsWith("data:image")) {
+                  imageUrl = `data:image/png;base64,${screenshotData}`;
+                }
+                
+                messages.push({
+                  role: "user",
+                  content: [
+                    {
+                      type: "image_url",
+                      image_url: {
+                        url: imageUrl,
+                      },
+                    },
+                    {
+                      type: "text",
+                      text: "This is the current screenshot of the page. Examine it carefully to determine your next action.",
+                    },
+                  ],
+                } as OpenAI.Chat.ChatCompletionMessageParam);
+              }
             }
           }
         } else {
