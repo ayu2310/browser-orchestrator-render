@@ -346,10 +346,7 @@ function LogLine({ log }: { log: LogEntry }) {
     second: "2-digit",
   });
 
-  // Auto-show screenshots on info logs with "Screenshot captured" message
-  const [showScreenshot, setShowScreenshot] = useState(
-    log.screenshot && log.message.includes("Screenshot")
-  );
+  const [showScreenshot, setShowScreenshot] = useState(false);
 
   return (
     <div className="flex flex-col gap-2 items-start" data-testid={`log-${log.level}`}>

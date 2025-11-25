@@ -19,10 +19,12 @@ export class McpClient {
   async connect(): Promise<void> {
     try {
       const transport = new StreamableHTTPClientTransport(new URL(this.config.url));
+
       this.client = new Client({
         name: "browserbase-orchestrator",
         version: "1.0.0",
       });
+
       await this.client.connect(transport);
     } catch (error) {
       console.error("Failed to connect to MCP server:", error);
@@ -32,43 +34,70 @@ export class McpClient {
 
   async listTools(): Promise<any[]> {
     try {
-      if (!this.client) await this.connect();
-      if (!this.client) throw new Error("Failed to connect to MCP server");
+      if (!this.client) {
+        await this.connect();
+      }
+
+      if (!this.client) {
+        throw new Error("Failed to connect to MCP server");
+      }
 
       const response = await this.client.listTools();
       return Array.isArray(response.tools) ? response.tools : [];
     } catch (error) {
       console.error("Failed to list tools:", error);
-      throw error;
+      return [];
     }
   }
 
+  /**
+   * Extract sessionId from response content
+   */
   private extractSessionId(content: any[]): string | null {
     if (!Array.isArray(content)) return null;
+    
     for (const item of content) {
       if (item.type === "text" && item.text) {
+        // Look for sessionId in response (format: sessions/{id})
         const match = item.text.match(/sessions\/([a-f0-9-]+)/i);
-        if (match) return match[1];
+        if (match) {
+          return match[1];
+        }
       }
     }
     return null;
   }
 
+  /**
+   * Extract screenshot from response content
+   */
   private extractScreenshot(content: any[]): string | null {
     if (!Array.isArray(content)) return null;
+    
     for (const item of content) {
       if (item.type === "text" && item.text) {
+        // Look for base64 image data
         const match = item.text.match(/data:image\/[^;\s]+;base64,[A-Za-z0-9+/=]+/);
-        if (match) return match[0];
+        if (match) {
+          return match[0];
+        }
       }
     }
     return null;
   }
 
+  /**
+   * Create a new browser session
+   */
   async createSession(): Promise<string> {
     try {
-      if (!this.client) await this.connect();
-      if (!this.client) throw new Error("Failed to connect to MCP server");
+      if (!this.client) {
+        await this.connect();
+      }
+
+      if (!this.client) {
+        throw new Error("Failed to connect to MCP server");
+      }
 
       const result = await this.client.callTool({
         name: "browserbase_session_create",
@@ -76,7 +105,9 @@ export class McpClient {
       });
 
       const sessionId = this.extractSessionId((result.content as any[]) || []);
-      if (!sessionId) throw new Error("Failed to extract sessionId from response");
+      if (!sessionId) {
+        throw new Error("Failed to extract sessionId from response");
+      }
 
       this.sessionId = sessionId;
       return sessionId;
@@ -86,11 +117,17 @@ export class McpClient {
     }
   }
 
+  /**
+   * Close the current browser session
+   */
   async closeSession(): Promise<void> {
     if (!this.sessionId) return;
-
+    
     try {
-      if (!this.client) await this.connect();
+      if (!this.client) {
+        await this.connect();
+      }
+
       if (!this.client) return;
 
       await this.client.callTool({
@@ -104,52 +141,66 @@ export class McpClient {
     }
   }
 
+  /**
+   * Call an MCP function with automatic sessionId injection
+   */
   async callFunction(
     functionCall: Omit<McpFunctionCall, "result" | "error">
   ): Promise<McpFunctionCall & { sessionId?: string; screenshot?: string }> {
     try {
-      if (!this.client) await this.connect();
-      if (!this.client) throw new Error("Failed to connect to MCP server");
+      if (!this.client) {
+        await this.connect();
+      }
 
-      // Inject sessionId into arguments (except for session_create)
-      const args = { ...functionCall.arguments };
+      if (!this.client) {
+        throw new Error("Failed to connect to MCP server");
+      }
+
+      // Add sessionId to arguments if we have one (except for session_create)
+      const arguments_with_session = {
+        ...functionCall.arguments,
+      };
+      
       if (this.sessionId && functionCall.function !== "browserbase_session_create") {
-        args.sessionId = this.sessionId;
+        arguments_with_session.sessionId = this.sessionId;
       }
 
       const result = await this.client.callTool({
         name: functionCall.function,
-        arguments: args,
+        arguments: arguments_with_session,
       });
 
       let resultText = "";
+      let extractedSessionId = this.sessionId;
       let screenshot: string | null = null;
+
       const content = (result.content as any[]) || [];
+      if (Array.isArray(content)) {
+        for (const item of content) {
+          if (item.type === "text" && typeof item.text === "string") {
+            resultText += item.text;
 
-      // Extract result text
-      for (const item of content) {
-        if (item.type === "text" && typeof item.text === "string") {
-          resultText += item.text;
+            // Extract sessionId from session_create responses
+            if (functionCall.function === "browserbase_session_create") {
+              const sessionIdMatch = this.extractSessionId(content);
+              if (sessionIdMatch) {
+                extractedSessionId = sessionIdMatch;
+                this.sessionId = sessionIdMatch;
+              }
+            }
+          }
         }
-      }
 
-      // Extract screenshot if this is a screenshot call
-      if (functionCall.function === "browserbase_screenshot") {
-        screenshot = this.extractScreenshot(content);
-      }
-
-      // Extract sessionId if this is a session_create call
-      if (functionCall.function === "browserbase_session_create") {
-        const newSessionId = this.extractSessionId(content);
-        if (newSessionId) {
-          this.sessionId = newSessionId;
+        // Extract screenshot if this is a screenshot call
+        if (functionCall.function === "browserbase_screenshot") {
+          screenshot = this.extractScreenshot(content);
         }
       }
 
       const response: any = {
         ...functionCall,
         result: resultText,
-        sessionId: this.sessionId,
+        sessionId: extractedSessionId,
       };
 
       if (screenshot) {
