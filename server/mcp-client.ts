@@ -7,18 +7,10 @@ export interface McpServerConfig {
   apiKey?: string;
 }
 
-interface FlowState {
-  cacheKey?: string;
-  startingUrl?: string;
-  browserbaseSessionId?: string;
-  actions?: Array<any>;
-  [key: string]: any;
-}
-
 export class McpClient {
   private config: McpServerConfig;
   private client: Client | null = null;
-  private flowState: FlowState = {};
+  private sessionId: string | null = null;
 
   constructor(config: McpServerConfig) {
     this.config = config;
@@ -58,9 +50,46 @@ export class McpClient {
     }
   }
 
-  async callFunction(
-    functionCall: Omit<McpFunctionCall, "result" | "error">
-  ): Promise<McpFunctionCall & { flowState?: FlowState }> {
+  /**
+   * Extract sessionId from response content
+   */
+  private extractSessionId(content: any[]): string | null {
+    if (!Array.isArray(content)) return null;
+    
+    for (const item of content) {
+      if (item.type === "text" && item.text) {
+        // Look for sessionId in response (format: sessions/{id})
+        const match = item.text.match(/sessions\/([a-f0-9-]+)/i);
+        if (match) {
+          return match[1];
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Extract screenshot from response content
+   */
+  private extractScreenshot(content: any[]): string | null {
+    if (!Array.isArray(content)) return null;
+    
+    for (const item of content) {
+      if (item.type === "text" && item.text) {
+        // Look for base64 image data
+        const match = item.text.match(/data:image\/[^;\s]+;base64,[A-Za-z0-9+/=]+/);
+        if (match) {
+          return match[0];
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Create a new browser session
+   */
+  async createSession(): Promise<string> {
     try {
       if (!this.client) {
         await this.connect();
@@ -70,49 +99,115 @@ export class McpClient {
         throw new Error("Failed to connect to MCP server");
       }
 
-      // Add flowState to arguments for session reuse
-      const arguments_with_flowstate = {
+      const result = await this.client.callTool({
+        name: "browserbase_session_create",
+        arguments: {},
+      });
+
+      const sessionId = this.extractSessionId((result.content as any[]) || []);
+      if (!sessionId) {
+        throw new Error("Failed to extract sessionId from response");
+      }
+
+      this.sessionId = sessionId;
+      return sessionId;
+    } catch (error) {
+      console.error("Failed to create session:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Close the current browser session
+   */
+  async closeSession(): Promise<void> {
+    if (!this.sessionId) return;
+    
+    try {
+      if (!this.client) {
+        await this.connect();
+      }
+
+      if (!this.client) return;
+
+      await this.client.callTool({
+        name: "browserbase_session_close",
+        arguments: { sessionId: this.sessionId },
+      });
+
+      this.sessionId = null;
+    } catch (error) {
+      console.error("Failed to close session:", error);
+    }
+  }
+
+  /**
+   * Call an MCP function with automatic sessionId injection
+   */
+  async callFunction(
+    functionCall: Omit<McpFunctionCall, "result" | "error">
+  ): Promise<McpFunctionCall & { sessionId?: string; screenshot?: string }> {
+    try {
+      if (!this.client) {
+        await this.connect();
+      }
+
+      if (!this.client) {
+        throw new Error("Failed to connect to MCP server");
+      }
+
+      // Add sessionId to arguments if we have one (except for session_create)
+      const arguments_with_session = {
         ...functionCall.arguments,
-        flowState: this.flowState,
       };
+      
+      if (this.sessionId && functionCall.function !== "browserbase_session_create") {
+        arguments_with_session.sessionId = this.sessionId;
+      }
 
       const result = await this.client.callTool({
         name: functionCall.function,
-        arguments: arguments_with_flowstate,
+        arguments: arguments_with_session,
       });
 
-      // Extract flowState from response
-      let extractedFlowState = this.flowState;
       let resultText = "";
+      let extractedSessionId = this.sessionId;
+      let screenshot: string | null = null;
 
-      if (result.content && Array.isArray(result.content)) {
-        for (const content of result.content) {
-          if (content.type === "text" && typeof content.text === "string") {
-            resultText += content.text;
+      const content = (result.content as any[]) || [];
+      if (Array.isArray(content)) {
+        for (const item of content) {
+          if (item.type === "text" && typeof item.text === "string") {
+            resultText += item.text;
 
-            // Extract flowState from response text
-            const flowStateMatch = content.text.match(
-              /flowState \(persist externally\): ({[\s\S]*?})(?=\n|$)/
-            );
-            if (flowStateMatch) {
-              try {
-                extractedFlowState = JSON.parse(flowStateMatch[1]);
-              } catch (e) {
-                console.error("Failed to parse flowState:", e);
+            // Extract sessionId from session_create responses
+            if (functionCall.function === "browserbase_session_create") {
+              const sessionIdMatch = this.extractSessionId(content);
+              if (sessionIdMatch) {
+                extractedSessionId = sessionIdMatch;
+                this.sessionId = sessionIdMatch;
               }
             }
           }
         }
+
+        // Extract screenshot if this is a screenshot call
+        if (functionCall.function === "browserbase_screenshot") {
+          screenshot = this.extractScreenshot(content);
+        }
       }
 
-      // Update internal flowState
-      this.flowState = extractedFlowState;
-
-      return {
+      const response: any = {
         ...functionCall,
         result: resultText,
-        flowState: extractedFlowState,
+        sessionId: extractedSessionId,
       };
+
+      if (screenshot) {
+        response.screenshot = screenshot;
+      }
+
+      return response;
     } catch (error) {
       console.error("MCP function call error:", error);
       return {
@@ -122,15 +217,12 @@ export class McpClient {
     }
   }
 
-  getFlowState(): FlowState {
-    return this.flowState;
-  }
-
-  setFlowState(state: FlowState): void {
-    this.flowState = state;
+  getSessionId(): string | null {
+    return this.sessionId;
   }
 
   async close(): Promise<void> {
+    await this.closeSession();
     if (this.client) {
       try {
         await this.client.close();

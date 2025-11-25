@@ -46,6 +46,7 @@ export class Orchestrator {
   }
 
   async execute(prompt: string): Promise<{ success: boolean; result?: any; error?: string }> {
+    let sessionId: string | null = null;
     try {
       if (!process.env.OPENAI_API_KEY) {
         throw new Error("OpenAI API key not configured. Please add your OPENAI_API_KEY to secrets.");
@@ -54,14 +55,19 @@ export class Orchestrator {
       await this.initialize();
       await this.onLog("info", `Executing task: ${prompt}`);
 
+      // Create a new browser session
+      await this.onLog("info", "Creating new browser session...");
+      sessionId = await this.mcpClient.createSession();
+      await this.onLog("success", `Browser session created: ${sessionId}`);
+
       const systemPrompt = `You are a browser automation orchestrator. You have access to browser automation tools via MCP (Model Context Protocol).
 
 Your job is to:
 1. Understand the user's automation task
 2. Break it down into a series of browser actions
 3. Call the appropriate MCP functions in the correct order
-4. Always pass the flowState returned from each call to the next call to maintain the browser session
-5. After each action (navigate, click, fill, etc), take a screenshot using browserbase_screenshot to see the current state
+4. The sessionId is automatically managed - just call functions normally
+5. After each action (navigate, click, fill, etc), take a screenshot to see the current state
 6. Analyze the screenshot to determine the next action needed
 7. Repeat until the task is complete
 
@@ -69,7 +75,6 @@ Important Guidelines:
 - ALWAYS take a screenshot after navigation or any action to see the current state
 - Use screenshots to identify elements to click, text to find, form fields to fill
 - Reference what you see in screenshots when deciding what to do next
-- The flowState is critical for session continuity - pass it with every tool call
 - Be persistent: if an action fails, try alternative approaches based on what you see in the screenshot
 - When you see the desired result in a screenshot, report success
 
@@ -97,7 +102,7 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
       }));
 
       let iterationCount = 0;
-      const maxIterations = 10;
+      const maxIterations = 20;
 
       while (iterationCount < maxIterations && !this.cancelled) {
         iterationCount++;
@@ -147,27 +152,28 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
             } else {
               await this.onLog("success", `Function ${functionName} completed successfully`);
               
-              // Automatically take a screenshot after actions to see current state
+              // Update sessionId if returned from call
+              if (result.sessionId && !sessionId) {
+                sessionId = result.sessionId;
+              }
+
+              // Automatically take a screenshot after navigation or action to see current state
               if (["browserbase_stagehand_act", "browserbase_stagehand_navigate"].includes(functionName)) {
+                await this.onLog("info", "Taking screenshot to see current state...");
                 const screenshotResult = await this.mcpClient.callFunction({
                   function: "browserbase_screenshot",
-                  arguments: { flowState: result.flowState },
+                  arguments: {},
                 });
                 
-                if (!screenshotResult.error && screenshotResult.result) {
-                  const screenshotText = screenshotResult.result;
-                  const screenshotMatch = screenshotText.match(/data:image\/[^;\s]+;base64,[A-Za-z0-9+/=]+/);
-                  if (screenshotMatch) {
-                    await this.onLog("info", "Screenshot captured", { screenshot: screenshotMatch[0] });
-                  }
+                if (!screenshotResult.error && screenshotResult.screenshot) {
+                  await this.onLog("info", "Screenshot captured", { screenshot: screenshotResult.screenshot });
                 }
               }
               
-              // Include flowState info in the tool response
+              // Include result in the tool response
               const toolResponse = {
                 success: true,
                 result: result.result,
-                ...(result.flowState && { flowState: result.flowState }),
               };
               messages.push({
                 role: "tool",
@@ -193,7 +199,11 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
       await this.onLog("error", `Task failed: ${errorMessage}`);
       return { success: false, error: errorMessage };
     } finally {
-      await this.mcpClient.close();
+      // Close the browser session
+      if (sessionId) {
+        await this.onLog("info", "Closing browser session...");
+        await this.mcpClient.close();
+      }
     }
   }
 }
