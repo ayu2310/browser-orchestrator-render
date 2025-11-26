@@ -83,8 +83,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           const result = await orchestrator.execute(prompt);
           
-          // Get replay state before updating task
+          // Get replay state AFTER execution completes (before closing session)
           const replayState = orchestrator.getReplayState();
+          console.log(`[Routes] Replay state after execution:`, replayState ? {
+            sessionId: replayState.sessionId,
+            url: replayState.url,
+            actionsCount: replayState.actions.length
+          } : "null");
           
           if (result.success) {
             await storage.updateTask(task.id, {
@@ -94,6 +99,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               result: result.result,
               replayState: replayState || undefined,
             });
+            console.log(`[Routes] Task ${task.id} completed with replayState:`, replayState ? "yes" : "no");
           } else {
             await storage.updateTask(task.id, {
               status: "failed",
@@ -102,9 +108,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
               error: result.error,
               replayState: replayState || undefined,
             });
+            console.log(`[Routes] Task ${task.id} failed with replayState:`, replayState ? "yes" : "no");
           }
         } catch (error) {
+          // Get replay state even on error
           const replayState = orchestrator.getReplayState();
+          console.log(`[Routes] Task ${task.id} error, replayState:`, replayState ? "yes" : "no");
           await storage.updateTask(task.id, {
             status: "failed",
             completedAt: Date.now(),

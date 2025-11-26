@@ -37,21 +37,19 @@ export class Orchestrator {
   }
 
   async initialize(): Promise<void> {
-    await this.onLog("info", "Initializing orchestrator and connecting to MCP server...");
+    await this.onLog("info", "Initializing orchestrator and connecting to automation server...");
     try {
       // Ensure MCP client is connected
       await this.mcpClient.connect();
-      await this.onLog("info", "MCP server connection established");
+      await this.onLog("info", "Automation server connection established");
       
       this.tools = await this.mcpClient.listTools();
       if (this.tools.length > 0) {
-        await this.onLog("success", `Loaded ${this.tools.length} MCP tools`);
-        // Log available tool names for debugging
-        const toolNames = this.tools.map(t => t.name).join(", ");
-        await this.onLog("info", `Available tools: ${toolNames}`);
+        await this.onLog("success", `Loaded ${this.tools.length} automation tools`);
+        // Don't log tool names to UI to avoid exposing internal implementation
       } else {
-        await this.onLog("error", "No tools available from MCP server. Check MCP server connection and configuration.");
-        throw new Error("No MCP tools available. Cannot proceed with automation.");
+        await this.onLog("error", "No automation tools available. Check server connection and configuration.");
+        throw new Error("No automation tools available. Cannot proceed with automation.");
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -78,7 +76,7 @@ export class Orchestrator {
       // Create a new browser session
       await this.onLog("info", "Creating new browser session...");
       sessionId = await this.mcpClient.createSession();
-      await this.onLog("success", `Browser session created: ${sessionId}`);
+      await this.onLog("success", `Browser session created`);
       
       // Initialize replay state
       this.replayState = {
@@ -168,9 +166,23 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
             const functionName = toolCall.function.name;
             const functionArgs = JSON.parse(toolCall.function.arguments);
 
+            // Clean function name for UI (remove browserbase_ and stagehand_ prefixes)
+            const cleanFunctionName = functionName
+              .replace(/^browserbase_/i, "")
+              .replace(/^stagehand_/i, "")
+              .replace(/_/g, " ");
+            
+            // Clean args for UI (remove sessionId from display, sanitize function names)
+            const cleanArgs = { ...functionArgs };
+            delete cleanArgs.sessionId;
+            const cleanArgsStr = JSON.stringify(cleanArgs);
+            const sanitizedArgs = cleanArgsStr
+              .replace(/browserbase_/gi, "")
+              .replace(/stagehand_/gi, "");
+
             await this.onLog(
               "info",
-              `Calling ${functionName} with args: ${JSON.stringify(functionArgs)}`
+              `Calling ${cleanFunctionName}${sanitizedArgs !== "{}" ? ` with args: ${sanitizedArgs}` : ""}`
             );
 
             const result = await this.mcpClient.callFunction({
@@ -186,7 +198,12 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
                 content: `Error: ${result.error}`,
               });
             } else {
-              await this.onLog("success", `Function ${functionName} completed successfully`);
+              // Clean function name for UI
+              const cleanFunctionName = functionName
+                .replace(/^browserbase_/i, "")
+                .replace(/^stagehand_/i, "")
+                .replace(/_/g, " ");
+              await this.onLog("success", `${cleanFunctionName} completed successfully`);
               
               // Update sessionId if returned from call
               if (result.sessionId && !sessionId) {
@@ -197,6 +214,7 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
               if (this.replayState) {
                 if (functionName === "browserbase_stagehand_navigate" && functionArgs.url) {
                   this.replayState.url = functionArgs.url;
+                  console.log(`[Orchestrator] Replay state: URL captured: ${functionArgs.url}`);
                 }
                 if (functionName === "browserbase_stagehand_act") {
                   // Store the action for replay (without sessionId to avoid duplication)
@@ -206,6 +224,7 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
                     function: functionName,
                     arguments: actionArgs,
                   });
+                  console.log(`[Orchestrator] Replay state: Action captured (total: ${this.replayState.actions.length})`);
                 }
               }
 
@@ -240,6 +259,7 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
                       this.lastScreenshot = screenshotData;
                       console.log("[Orchestrator] Screenshot captured and normalized, length:", screenshotData.length);
                       // Log screenshot for UI display - ensure it's in proper format
+                      // Note: storage.addLog will extract screenshot from details and add it to log.screenshot
                       await this.onLog("info", "Screenshot captured", { screenshot: screenshotData });
                     } else {
                       await this.onLog("warning", "Screenshot function returned no image data");
