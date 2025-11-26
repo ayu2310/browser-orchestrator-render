@@ -83,13 +83,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           const result = await orchestrator.execute(prompt);
           
-          // Get replay state AFTER execution completes (before closing session)
+          // Get replay state before updating task
           const replayState = orchestrator.getReplayState();
-          console.log(`[Routes] Replay state after execution:`, replayState ? {
-            sessionId: replayState.sessionId,
-            url: replayState.url,
-            actionsCount: replayState.actions.length
-          } : "null");
           
           if (result.success) {
             await storage.updateTask(task.id, {
@@ -99,7 +94,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
               result: result.result,
               replayState: replayState || undefined,
             });
-            console.log(`[Routes] Task ${task.id} completed with replayState:`, replayState ? "yes" : "no");
           } else {
             await storage.updateTask(task.id, {
               status: "failed",
@@ -108,12 +102,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               error: result.error,
               replayState: replayState || undefined,
             });
-            console.log(`[Routes] Task ${task.id} failed with replayState:`, replayState ? "yes" : "no");
           }
         } catch (error) {
-          // Get replay state even on error
           const replayState = orchestrator.getReplayState();
-          console.log(`[Routes] Task ${task.id} error, replayState:`, replayState ? "yes" : "no");
           await storage.updateTask(task.id, {
             status: "failed",
             completedAt: Date.now(),
@@ -164,12 +155,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "No replay state available for this task" });
       }
 
-      if (!process.env.OPENAI_API_KEY) {
-        return res.status(400).json({
-          message: "OpenAI API key not configured. Please add your OPENAI_API_KEY to secrets.",
-        });
-      }
-
       const { sessionId, url, actions } = task.replayState;
 
       // Create a new task for the replay
@@ -183,37 +168,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
         apiKey: process.env.MCP_API_KEY,
       });
 
-      const orchestrator = new Orchestrator({
-        mcpClient,
-        onLog: async (level, message, details) => {
-          const log = await storage.addLog({
-            taskId: replayTask.id,
-            timestamp: Date.now(),
-            level,
-            message,
-            details,
-          });
-          broadcastLog(log);
-        },
-      });
-
-      currentOrchestrator = orchestrator;
+      // Simple logging function for deterministic replay (no Orchestrator needed)
+      const log = async (level: "info" | "success" | "error" | "warning", message: string, details?: any) => {
+        const logEntry = await storage.addLog({
+          taskId: replayTask.id,
+          timestamp: Date.now(),
+          level,
+          message,
+          details,
+        });
+        broadcastLog(logEntry);
+      };
 
       res.json(replayTask);
 
       setImmediate(async () => {
         try {
-          // Replay: use existing session, navigate to URL, execute actions
-          await orchestrator.initialize();
-          await orchestrator.log("info", `Replaying task with session ${sessionId}...`);
+          // Connect MCP client
+          await mcpClient.connect();
+          await log("info", `Replaying task with session ${sessionId}...`);
 
-          // Reuse the session
+          // Reuse the session (deterministic - no new session creation)
           await mcpClient.createSession(sessionId);
-          await orchestrator.log("success", `Reusing browser session: ${sessionId}`);
+          await log("success", `Reusing browser session: ${sessionId}`);
 
           // Navigate to the cached URL if available
           if (url) {
-            await orchestrator.log("info", `Navigating to ${url}...`);
+            await log("info", `Navigating to ${url}...`);
             const navigateResult = await mcpClient.callFunction({
               function: "browserbase_stagehand_navigate",
               arguments: { url, sessionId },
@@ -221,20 +202,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (navigateResult.error) {
               throw new Error(`Navigation failed: ${navigateResult.error}`);
             }
-            await orchestrator.log("success", `Navigated to ${url}`);
+            await log("success", `Navigated to ${url}`);
           }
 
-          // Execute all cached actions
+          // Execute all cached actions deterministically
           for (const action of actions) {
-            await orchestrator.log("info", `Replaying action: ${action.function}...`);
+            // Clean function name for UI display
+            const cleanFunctionName = action.function
+              .replace(/^browserbase_/i, "")
+              .replace(/^stagehand_/i, "")
+              .replace(/_/g, " ");
+            
+            await log("info", `Replaying action: ${cleanFunctionName}...`);
             const actionResult = await mcpClient.callFunction({
               function: action.function,
               arguments: { ...action.arguments, sessionId },
             });
             if (actionResult.error) {
-              await orchestrator.log("error", `Action failed: ${actionResult.error}`);
+              await log("error", `Action failed: ${actionResult.error}`);
             } else {
-              await orchestrator.log("success", `Action completed: ${action.function}`);
+              await log("success", `${cleanFunctionName} completed successfully`);
             }
           }
 
@@ -245,7 +232,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             result: "Replay completed successfully",
           });
 
-          // Clean up replay state from original task
+          // Clean up replay state from original task (free memory)
           await storage.updateTask(task.id, {
             replayState: undefined,
           });
@@ -257,7 +244,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             error: error instanceof Error ? error.message : "Replay failed",
           });
         } finally {
-          // Close the session
+          // Close the session and reset orchestrator
           await mcpClient.close();
           currentOrchestrator = null;
         }

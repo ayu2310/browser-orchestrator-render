@@ -132,6 +132,108 @@ async function testComplexTask() {
   }
 }
 
+async function testReplayFlow() {
+  console.log("\n=== Testing Replay Flow ===\n");
+  
+  // First, execute a task to get replay state
+  const mcpClient = new McpClient({
+    url: process.env.MCP_SERVER_URL || "https://mcp-browser-automation-render.onrender.com/api/mcp",
+    apiKey: process.env.MCP_API_KEY,
+  });
+
+  const orchestrator = new Orchestrator({
+    mcpClient,
+    onLog: async (level, message, details) => {
+      await mockStorage.addLog({
+        taskId: "test-task",
+        timestamp: Date.now(),
+        level,
+        message,
+        details,
+      });
+    },
+  });
+
+  try {
+    console.log("Step 1: Execute original task to capture replay state...");
+    const testPrompt = "Navigate to https://example.com";
+    const result = await orchestrator.execute(testPrompt);
+    
+    if (!result.success) {
+      console.error("❌ Original task failed, cannot test replay");
+      return { success: false, error: "Original task failed" };
+    }
+
+    const replayState = orchestrator.getReplayState();
+    if (!replayState) {
+      console.error("❌ No replay state captured");
+      return { success: false, error: "No replay state" };
+    }
+
+    console.log("✅ Replay state captured:");
+    console.log(`   Session ID: ${replayState.sessionId}`);
+    console.log(`   URL: ${replayState.url || "none"}`);
+    console.log(`   Actions: ${replayState.actions.length}`);
+
+    // Now test deterministic replay (without Orchestrator)
+    console.log("\nStep 2: Testing deterministic replay (no LLM)...");
+    const replayMcpClient = new McpClient({
+      url: process.env.MCP_SERVER_URL || "https://mcp-browser-automation-render.onrender.com/api/mcp",
+      apiKey: process.env.MCP_API_KEY,
+    });
+
+    const replayLogs: any[] = [];
+    const replayLog = async (level: string, message: string) => {
+      replayLogs.push({ level, message, timestamp: Date.now() });
+      console.log(`[REPLAY ${level.toUpperCase()}] ${message}`);
+    };
+
+    await replayMcpClient.connect();
+    await replayLog("info", `Replaying with session ${replayState.sessionId}...`);
+
+    // Reuse session
+    await replayMcpClient.createSession(replayState.sessionId);
+    await replayLog("success", `Session reused: ${replayState.sessionId}`);
+
+    // Navigate
+    if (replayState.url) {
+      await replayLog("info", `Navigating to ${replayState.url}...`);
+      const navResult = await replayMcpClient.callFunction({
+        function: "browserbase_stagehand_navigate",
+        arguments: { url: replayState.url, sessionId: replayState.sessionId },
+      });
+      if (navResult.error) {
+        throw new Error(`Navigation failed: ${navResult.error}`);
+      }
+      await replayLog("success", `Navigated to ${replayState.url}`);
+    }
+
+    // Execute actions
+    for (const action of replayState.actions) {
+      await replayLog("info", `Replaying action: ${action.function}...`);
+      const actionResult = await replayMcpClient.callFunction({
+        function: action.function,
+        arguments: { ...action.arguments, sessionId: replayState.sessionId },
+      });
+      if (actionResult.error) {
+        await replayLog("error", `Action failed: ${actionResult.error}`);
+      } else {
+        await replayLog("success", `Action completed`);
+      }
+    }
+
+    await replayMcpClient.close();
+    await replayLog("success", "Replay completed successfully");
+
+    console.log("\n✅ Replay test passed!");
+    console.log(`   Replay logs: ${replayLogs.length}`);
+    return { success: true };
+  } catch (error) {
+    console.error("\n❌ Replay test failed:", error);
+    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+  }
+}
+
 async function runTests() {
   console.log("🧪 Starting Local Test Suite\n");
   console.log("Environment:");
@@ -155,14 +257,18 @@ async function runTests() {
   // Test 2: Complex Task
   const taskTest = await testComplexTask();
 
+  // Test 3: Replay Flow (deterministic, no LLM)
+  const replayTest = await testReplayFlow();
+
   // Summary
   console.log("\n=== Test Summary ===");
   console.log(`MCP Connection: ${connectionTest.success ? "✅ PASS" : "❌ FAIL"}`);
   console.log(`Task Execution: ${taskTest.success ? "✅ PASS" : "❌ FAIL"}`);
+  console.log(`Replay Flow: ${replayTest.success ? "✅ PASS" : "❌ FAIL"}`);
   console.log(`Total Logs: ${mockLogs.length}`);
   console.log(`Screenshots: ${mockLogs.filter(l => l.screenshot).length}`);
 
-  if (connectionTest.success && taskTest.success) {
+  if (connectionTest.success && taskTest.success && replayTest.success) {
     console.log("\n✅ All tests passed!");
     process.exit(0);
   } else {
