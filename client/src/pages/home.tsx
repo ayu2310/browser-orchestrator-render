@@ -16,7 +16,9 @@ import {
   Terminal,
   Info,
   AlertTriangle,
-  AlertCircle
+  AlertCircle,
+  RotateCcw,
+  X
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Task, LogEntry } from "@shared/schema";
@@ -80,6 +82,32 @@ export default function Home() {
     mutationFn: () => apiRequest("POST", "/api/tasks/cancel", {}),
     onSuccess: () => {
       setCurrentTaskId(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks/current"] });
+    },
+  });
+
+  const replayMutation = useMutation({
+    mutationFn: async (taskId: string) => {
+      const response = await apiRequest("POST", `/api/tasks/${taskId}/replay`, {});
+      return await response.json();
+    },
+    onSuccess: (data: Task) => {
+      setCurrentTaskId(data.id);
+      setSelectedHistoryTaskId(null);
+      setPrompt("");
+      setLogs([]);
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks/current"] });
+    },
+  });
+
+  const cancelReplayMutation = useMutation({
+    mutationFn: async (taskId: string) => {
+      const response = await apiRequest("POST", `/api/tasks/${taskId}/cancel-replay`, {});
+      return await response.json();
+    },
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
       queryClient.invalidateQueries({ queryKey: ["/api/tasks/current"] });
     },
@@ -234,6 +262,33 @@ export default function Home() {
                       <p className="text-sm text-destructive">{currentTask.error}</p>
                     </div>
                   )}
+                  {(currentTask.status === "completed" || currentTask.status === "failed") && currentTask.replayState && (
+                    <div className="pt-2 border-t">
+                      <p className="text-sm font-medium mb-3">Replay Session</p>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={() => replayMutation.mutate(currentTask.id)}
+                          disabled={replayMutation.isPending || isExecuting}
+                          data-testid="button-replay"
+                        >
+                          <RotateCcw className="w-4 h-4 mr-2" />
+                          Replay
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => cancelReplayMutation.mutate(currentTask.id)}
+                          disabled={cancelReplayMutation.isPending || isExecuting}
+                          data-testid="button-cancel-replay"
+                        >
+                          <X className="w-4 h-4 mr-2" />
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -371,8 +426,12 @@ function LogLine({ log }: { log: LogEntry }) {
           <img
             src={log.screenshot}
             alt="Browser screenshot"
-            className="w-full h-auto"
+            className="w-full h-auto max-h-[600px] object-contain"
             data-testid={`img-screenshot-${log.id}`}
+            onError={(e) => {
+              console.error("Failed to load screenshot:", log.screenshot?.substring(0, 50));
+              e.currentTarget.style.display = "none";
+            }}
           />
         </div>
       )}
@@ -389,20 +448,51 @@ function TaskHistoryItem({
   isSelected: boolean;
   onSelect: () => void;
 }) {
+  const replayMutation = useMutation({
+    mutationFn: async (taskId: string) => {
+      const response = await apiRequest("POST", `/api/tasks/${taskId}/replay`, {});
+      return await response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks/current"] });
+    },
+  });
+
+  const cancelReplayMutation = useMutation({
+    mutationFn: async (taskId: string) => {
+      const response = await apiRequest("POST", `/api/tasks/${taskId}/cancel-replay`, {});
+      return await response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+    },
+  });
+
+  const handleReplay = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    replayMutation.mutate(task.id);
+  };
+
+  const handleCancelReplay = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    cancelReplayMutation.mutate(task.id);
+  };
+
   return (
     <Card 
-      className={`hover-elevate transition-all cursor-pointer ${isSelected ? "ring-2 ring-primary" : ""}`}
+      className={`hover-elevate transition-all ${isSelected ? "ring-2 ring-primary" : ""}`}
       onClick={onSelect}
       data-testid={`card-task-${task.id}`}
     >
       <CardContent className="p-4">
         <div className="flex items-start justify-between gap-2 mb-2">
-          <p className="text-sm font-medium line-clamp-2" data-testid={`text-task-prompt-${task.id}`}>
+          <p className="text-sm font-medium line-clamp-2 cursor-pointer" data-testid={`text-task-prompt-${task.id}`}>
             {task.prompt}
           </p>
           <StatusBadge status={task.status} />
         </div>
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
           <span data-testid={`text-task-date-${task.id}`}>
             {new Date(task.createdAt).toLocaleString("en-US", {
               month: "short",
@@ -417,6 +507,30 @@ function TaskHistoryItem({
             </span>
           )}
         </div>
+        {(task.status === "completed" || task.status === "failed") && task.replayState && (
+          <div className="flex gap-2 pt-2 border-t">
+            <Button
+              variant="default"
+              size="sm"
+              className="flex-1"
+              onClick={handleReplay}
+              disabled={replayMutation.isPending}
+              data-testid={`button-replay-${task.id}`}
+            >
+              <RotateCcw className="w-3 h-3 mr-1" />
+              Replay
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCancelReplay}
+              disabled={cancelReplayMutation.isPending}
+              data-testid={`button-cancel-replay-${task.id}`}
+            >
+              <X className="w-3 h-3" />
+            </Button>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

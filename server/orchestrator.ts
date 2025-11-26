@@ -21,10 +21,19 @@ export class Orchestrator {
   private tools: any[] = [];
   private cancelled = false;
   private lastScreenshot: string | null = null;
+  private replayState: { sessionId: string; url?: string; actions: Array<{ function: string; arguments: Record<string, any> }> } | null = null;
 
   constructor(config: OrchestratorConfig) {
     this.mcpClient = config.mcpClient;
     this.onLog = config.onLog;
+  }
+
+  getReplayState() {
+    return this.replayState;
+  }
+
+  async log(level: "info" | "success" | "error" | "warning", message: string, details?: any): Promise<void> {
+    await this.onLog(level, message, details);
   }
 
   async initialize(): Promise<void> {
@@ -60,6 +69,12 @@ export class Orchestrator {
       await this.onLog("info", "Creating new browser session...");
       sessionId = await this.mcpClient.createSession();
       await this.onLog("success", `Browser session created: ${sessionId}`);
+      
+      // Initialize replay state
+      this.replayState = {
+        sessionId,
+        actions: [],
+      };
 
       const systemPrompt = `You are a browser automation orchestrator. You have access to browser automation tools via MCP (Model Context Protocol).
 
@@ -159,9 +174,33 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
                 sessionId = result.sessionId;
               }
 
-              // Automatically take a screenshot after navigation or action to see current state
+              // Capture replay state: URL from navigate, actions from act
+              if (this.replayState) {
+                if (functionName === "browserbase_stagehand_navigate" && functionArgs.url) {
+                  this.replayState.url = functionArgs.url;
+                }
+                if (functionName === "browserbase_stagehand_act") {
+                  // Store the action for replay (without sessionId to avoid duplication)
+                  const actionArgs = { ...functionArgs };
+                  delete actionArgs.sessionId;
+                  this.replayState.actions.push({
+                    function: functionName,
+                    arguments: actionArgs,
+                  });
+                }
+              }
+
+              // Check if the function result itself contains a screenshot
               let screenshotData: string | null = null;
-              if (["browserbase_stagehand_act", "browserbase_stagehand_navigate"].includes(functionName)) {
+              if (result.screenshot) {
+                screenshotData = result.screenshot;
+                this.lastScreenshot = screenshotData;
+                console.log("[Orchestrator] Screenshot found in function result, length:", screenshotData.length);
+                await this.onLog("info", "Screenshot captured", { screenshot: screenshotData });
+              }
+              
+              // Automatically take a screenshot after navigation or action to see current state
+              if (!screenshotData && ["browserbase_stagehand_act", "browserbase_stagehand_navigate"].includes(functionName)) {
                 await this.onLog("info", "Taking screenshot to see current state...");
                 const screenshotResult = await this.mcpClient.callFunction({
                   function: "browserbase_screenshot",
@@ -172,9 +211,11 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
                   if (screenshotResult.screenshot) {
                     screenshotData = screenshotResult.screenshot;
                     this.lastScreenshot = screenshotData;
-                    console.log("[Orchestrator] Screenshot captured, logging to user and sending to LLM");
-                    // Log screenshot for UI display
+                    console.log("[Orchestrator] Screenshot captured and normalized, length:", screenshotData.length);
+                    // Log screenshot for UI display - ensure it's in proper format
                     await this.onLog("info", "Screenshot captured", { screenshot: screenshotData });
+                  } else {
+                    await this.onLog("warning", "Screenshot function returned no image data");
                   }
                 } else {
                   await this.onLog("warning", `Failed to capture screenshot: ${screenshotResult.error}`);
@@ -194,7 +235,7 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
               
               // If we have a screenshot, add it as the next user message so GPT can see it
               if (screenshotData) {
-                // Ensure we have proper data URL format
+                // Ensure we have proper data URL format (should already be normalized by MCP client)
                 let imageUrl = screenshotData;
                 if (!screenshotData.startsWith("data:image")) {
                   imageUrl = `data:image/png;base64,${screenshotData}`;

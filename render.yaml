@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: browser-orchestrator
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # PORT is automatically set by Render, no need to specify
+      - key: MCP_SERVER_URL
+        value: https://mcp-browser-automation-render.onrender.com/api/mcp
+      - key: OPENAI_API_KEY
+        sync: false  # Set this in Render dashboard
+      - key: MCP_API_KEY
+        sync: false  # Optional, set in Render dashboard if needed
+

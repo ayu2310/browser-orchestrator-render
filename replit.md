@@ -16,7 +16,9 @@ AI-powered browser automation orchestrator that connects to a BrowserBase MCP (M
   - `GET /api/tasks/current` - Get currently running task
   - `GET /api/tasks/:id/logs` - Get logs for a specific task
   - `POST /api/tasks/execute` - Execute a new automation task
-  - `POST /api/tasks/cancel` - Cancel current running task
+- `POST /api/tasks/cancel` - Cancel current running task
+- `POST /api/tasks/:id/replay` - Replay a completed task with cached session/actions
+- `POST /api/tasks/:id/cancel-replay` - Cancel/delete replay state for a task
 - **WebSocket Server**: Real-time log broadcasting at `/ws`
 - **Storage**: In-memory storage for tasks and logs
 
@@ -72,12 +74,67 @@ The orchestrator properly handles the stateless architecture of the MCP server:
 - `browserbase_stagehand_navigate` - Navigate to URLs
 - `browserbase_stagehand_act` - Execute browser actions
 - `browserbase_stagehand_observe` - Find elements with selectors
-- `browserbase_screenshot` - Capture screenshots
+- `browserbase_screenshot` - Capture screenshots (automatically normalized to viewable format)
 - And more (automatically loaded from MCP server)
+
+### Replay Feature
+
+Tasks automatically capture replay state (sessionId, URL, actions) for replay:
+- **After completion**: UI shows "Replay" and "Cancel" buttons
+- **On Replay**: Reuses session, navigates to cached URL, executes all cached actions
+- **On Cancel**: Deletes replay state (stateless, no database)
+- **Replay State**: Automatically cleaned up after replay completion or cancellation
 
 ## Development
 
 The app runs on port 5000 with both frontend and backend served together. The workflow "Start application" runs `npm run dev`.
+
+## Deployment (Render)
+
+The application is configured for deployment on Render via GitHub.
+
+### Setup Steps:
+
+1. **Push to GitHub**: Ensure your code is pushed to `https://github.com/ayu2310/browser-orchestrator-render`
+
+2. **Create Render Service**:
+   - Go to Render dashboard
+   - Create a new Web Service
+   - Connect your GitHub repository
+   - Render will automatically detect `render.yaml` configuration
+
+3. **Environment Variables** (set in Render dashboard):
+   - `OPENAI_API_KEY` (required) - Your OpenAI API key for GPT-4o
+   - `MCP_API_KEY` (optional) - API key for MCP server if required
+   - `MCP_SERVER_URL` - Already configured in `render.yaml`, but can be overridden
+   - `NODE_ENV` - Set to `production` (already in render.yaml)
+   - `PORT` - Automatically set by Render (defaults to 10000 in config)
+
+4. **Build & Deploy**:
+   - Render will automatically:
+     - Run `npm install && npm run build`
+     - Start with `npm start`
+   - The build process creates both client (Vite) and server (esbuild) bundles
+
+### Screenshot Handling
+
+Screenshots are automatically:
+- **Extracted** from MCP server responses in multiple formats
+- **Normalized** to `data:image/png;base64,` format for consistent display
+- **Passed** to the orchestrator for LLM vision analysis
+- **Displayed** in the UI with a "View Screenshot" button in each log entry
+- **Optimized** for display with max-height constraints and error handling
+
+Screenshots are captured after:
+- Navigation actions (`browserbase_stagehand_navigate`)
+- Action executions (`browserbase_stagehand_act`)
+- Any function that returns screenshot data
+
+The UI displays screenshots with:
+- Expandable/collapsible view
+- Full-width responsive display
+- Maximum height of 600px for readability
+- Automatic error handling for invalid image data
 
 ## Project Structure
 

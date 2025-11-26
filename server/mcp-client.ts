@@ -69,13 +69,42 @@ export class McpClient {
   }
 
   /**
+   * Normalize screenshot to proper data:image format
+   * Ensures all screenshots are in viewable format for UI
+   */
+  private normalizeScreenshot(screenshot: string): string {
+    if (!screenshot) return screenshot;
+
+    // If already in data:image format, return as-is
+    if (screenshot.startsWith("data:image/")) {
+      return screenshot;
+    }
+
+    // If it's a base64 string without prefix, add data:image/png;base64, prefix
+    if (/^[A-Za-z0-9+/=]+$/.test(screenshot) && screenshot.length > 100) {
+      return `data:image/png;base64,${screenshot}`;
+    }
+
+    // If it's a URL, return as-is (browser can handle it)
+    if (screenshot.startsWith("http://") || screenshot.startsWith("https://")) {
+      return screenshot;
+    }
+
+    // Default: assume it's base64 and add prefix
+    return `data:image/png;base64,${screenshot}`;
+  }
+
+  /**
    * Extract screenshot from response content
    * Handles multiple possible formats: base64 data urls, URLs, or embedded in various structures
+   * Returns normalized screenshot in proper viewable format
    */
   private extractScreenshot(content: any[]): string | null {
     if (!Array.isArray(content)) return null;
     
     console.log("[MCP] Extracting screenshot from", content.length, "content items");
+    
+    let rawScreenshot: string | null = null;
     
     for (const item of content) {
       console.log("[MCP] Item type:", item.type);
@@ -84,10 +113,16 @@ export class McpClient {
       if (item.type === "image") {
         console.log("[MCP] Found direct image item");
         if (item.data && typeof item.data === "string") {
-          return item.data;
+          rawScreenshot = item.data;
+          break;
         }
         if (item.source && item.source.data) {
-          return item.source.data;
+          rawScreenshot = item.source.data;
+          break;
+        }
+        if (item.source && item.source.uri) {
+          rawScreenshot = item.source.uri;
+          break;
         }
       }
       
@@ -98,37 +133,48 @@ export class McpClient {
         let match = item.text.match(/data:image\/[^;\s]+;base64,[A-Za-z0-9+/=]+/);
         if (match) {
           console.log("[MCP] Found screenshot via direct data URL");
-          return match[0];
+          rawScreenshot = match[0];
+          break;
         }
         
         // Pattern 2: In markdown code block
         match = item.text.match(/```[\s\S]*?(data:image\/[^;\s]+;base64,[A-Za-z0-9+/=]+)[\s\S]*?```/);
         if (match) {
           console.log("[MCP] Found screenshot via markdown code block");
-          return match[1];
+          rawScreenshot = match[1];
+          break;
         }
         
         // Pattern 3: In JSON object
         match = item.text.match(/"(?:image|screenshot|data)":\s*"(data:image\/[^"]+)"/);
         if (match) {
           console.log("[MCP] Found screenshot via JSON property");
-          return match[1];
+          rawScreenshot = match[1];
+          break;
         }
         
         // Pattern 4: URL to image
         match = item.text.match(/(https?:\/\/[^\s]+\.(?:png|jpg|jpeg|webp|gif))/i);
         if (match) {
           console.log("[MCP] Found screenshot via HTTP URL:", match[1]);
-          return match[1];
+          rawScreenshot = match[1];
+          break;
         }
         
         // Pattern 5: Very long base64 string (likely screenshot)
         match = item.text.match(/^([A-Za-z0-9+/=]{1000,})$/);
         if (match) {
           console.log("[MCP] Found likely screenshot via base64 pattern");
-          return "data:image/png;base64," + match[1];
+          rawScreenshot = match[1];
+          break;
         }
       }
+    }
+    
+    if (rawScreenshot) {
+      const normalized = this.normalizeScreenshot(rawScreenshot);
+      console.log("[MCP] Screenshot normalized, format:", normalized.substring(0, 30));
+      return normalized;
     }
     
     console.log("[MCP] No screenshot found in response");
@@ -136,9 +182,9 @@ export class McpClient {
   }
 
   /**
-   * Create a new browser session
+   * Create a new browser session or reuse an existing one for replay
    */
-  async createSession(): Promise<string> {
+  async createSession(replaySessionId?: string): Promise<string> {
     try {
       if (!this.client) {
         await this.connect();
@@ -146,6 +192,13 @@ export class McpClient {
 
       if (!this.client) {
         throw new Error("Failed to connect to MCP server");
+      }
+
+      // If replaySessionId is provided, use it directly (for replay mode)
+      if (replaySessionId) {
+        this.sessionId = replaySessionId;
+        console.log("[MCP] Reusing session for replay:", replaySessionId);
+        return replaySessionId;
       }
 
       const result = await this.client.callTool({
@@ -250,7 +303,7 @@ export class McpClient {
         const potentialScreenshot = this.extractScreenshot(content);
         if (potentialScreenshot) {
           screenshot = potentialScreenshot;
-          console.log("[MCP] Screenshot extracted successfully, length:", screenshot.length);
+          console.log("[MCP] Screenshot extracted and normalized, length:", screenshot.length, "format:", screenshot.substring(0, 30));
         }
       }
 
