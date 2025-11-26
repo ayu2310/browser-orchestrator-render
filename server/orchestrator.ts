@@ -339,7 +339,23 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
 
       return { success: true, result: "Task completed" };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      let errorMessage = error instanceof Error ? error.message : "Unknown error";
+      
+      // Clean up HTML/502 error messages
+      if (errorMessage.includes("<!DOCTYPE html>") || errorMessage.includes("<html")) {
+        if (errorMessage.includes("502") || errorMessage.match(/HTTP 502/)) {
+          errorMessage = "MCP server is unavailable (502 Bad Gateway). The server may be down or overloaded. Please try again later.";
+        } else if (errorMessage.includes("503") || errorMessage.match(/HTTP 503/)) {
+          errorMessage = "MCP server is temporarily unavailable (503 Service Unavailable). Please try again later.";
+        } else if (errorMessage.includes("504") || errorMessage.match(/HTTP 504/)) {
+          errorMessage = "MCP server request timed out (504 Gateway Timeout). Please try again later.";
+        } else {
+          errorMessage = "MCP server returned an error. The server may be down or misconfigured.";
+        }
+      } else if (errorMessage.match(/\(HTTP 502\)/)) {
+        errorMessage = "MCP server is unavailable (502 Bad Gateway). The server may be down or overloaded.";
+      }
+      
       await this.onLog("error", `Task failed: ${errorMessage}`);
       return { success: false, error: errorMessage };
     } finally {

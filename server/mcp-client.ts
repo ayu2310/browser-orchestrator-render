@@ -40,7 +40,8 @@ export class McpClient {
         return; // Success, exit retry loop
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
-        console.error(`[MCP] Connection attempt ${attempt} failed:`, lastError.message);
+        const cleanMessage = this.cleanErrorMessage(lastError.message);
+        console.error(`[MCP] Connection attempt ${attempt} failed:`, cleanMessage);
         
         if (attempt < maxRetries) {
           const delay = attempt * 1000; // Exponential backoff: 1s, 2s, 3s
@@ -51,7 +52,8 @@ export class McpClient {
     }
 
     // All retries failed
-    throw new Error(`Failed to connect to MCP server after ${maxRetries} attempts: ${lastError?.message || "Unknown error"}`);
+    const cleanMessage = lastError ? this.cleanErrorMessage(lastError.message) : "Unknown error";
+    throw new Error(`Failed to connect to MCP server after ${maxRetries} attempts: ${cleanMessage}`);
   }
 
   async listTools(): Promise<any[]> {
@@ -86,6 +88,59 @@ export class McpClient {
       }
       return [];
     }
+  }
+
+  /**
+   * Clean error messages to remove HTML and show only relevant info
+   */
+  private cleanErrorMessage(errorMessage: string): string {
+    if (!errorMessage) return "Unknown error";
+    
+    // If error contains HTML (like 502 error pages), extract just the status code
+    if (errorMessage.includes("<!DOCTYPE html>") || errorMessage.includes("<html")) {
+      // Try to extract HTTP status code
+      const statusMatch = errorMessage.match(/HTTP (\d{3})/);
+      if (statusMatch) {
+        const statusCode = statusMatch[1];
+        if (statusCode === "502") {
+          return "MCP server is unavailable (502 Bad Gateway). The server may be down or overloaded. Please try again later.";
+        } else if (statusCode === "503") {
+          return "MCP server is temporarily unavailable (503 Service Unavailable). Please try again later.";
+        } else if (statusCode === "504") {
+          return "MCP server request timed out (504 Gateway Timeout). Please try again later.";
+        } else {
+          return `MCP server returned error ${statusCode}. Please check the server status.`;
+        }
+      }
+      // If HTML but no status code found, return generic message
+      return "MCP server returned an HTML error page. The server may be down or misconfigured.";
+    }
+    
+    // If error mentions HTTP status code directly
+    const httpStatusMatch = errorMessage.match(/\(HTTP (\d{3})\)/);
+    if (httpStatusMatch) {
+      const statusCode = httpStatusMatch[1];
+      if (statusCode === "502") {
+        return "MCP server is unavailable (502 Bad Gateway). The server may be down or overloaded.";
+      } else if (statusCode === "503") {
+        return "MCP server is temporarily unavailable (503 Service Unavailable).";
+      } else if (statusCode === "504") {
+        return "MCP server request timed out (504 Gateway Timeout).";
+      }
+    }
+    
+    // Remove long base64 strings or HTML content from error messages
+    let cleaned = errorMessage;
+    // Remove base64 data URLs
+    cleaned = cleaned.replace(/data:[^;]+;base64,[A-Za-z0-9+/=]{100,}/g, "[base64 data removed]");
+    // Remove HTML tags
+    cleaned = cleaned.replace(/<[^>]+>/g, "");
+    // Truncate very long messages
+    if (cleaned.length > 500) {
+      cleaned = cleaned.substring(0, 500) + "... [truncated]";
+    }
+    
+    return cleaned;
   }
 
   /**
