@@ -25,6 +25,7 @@ export const replayStateSchema = z.object({
     arguments: z.record(z.any()),
   })),
 });
+export type ReplayState = z.infer<typeof replayStateSchema>;
 
 export const taskSchema = z.object({
   id: z.string(),
