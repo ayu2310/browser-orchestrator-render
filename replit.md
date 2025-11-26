@@ -85,6 +85,57 @@ Tasks automatically capture replay state (sessionId, URL, actions) for replay:
 - **On Cancel**: Deletes replay state (stateless, no database)
 - **Replay State**: Automatically cleaned up after replay completion or cancellation
 
+## Render Deployment (Free Plan Limitations)
+
+⚠️ **Important**: If deploying on Render's free plan, be aware of these limitations:
+
+### Critical Limitations:
+
+1. **Idle Spin-Down (15 minutes)**
+   - Free services automatically spin down after 15 minutes of inactivity
+   - First request after spin-down can take up to 60 seconds to wake up
+   - **Impact**: WebSocket connections will be lost, in-memory state (tasks, logs, replayState) is cleared
+   - **Workaround**: Keep service active with periodic health checks or upgrade to paid plan
+
+2. **Service Restarts**
+   - Render may restart free services at any time
+   - **Impact**: All in-memory data (tasks, logs, replayState) is lost on restart
+   - **Workaround**: This is expected behavior - users will need to re-run tasks after restarts
+
+3. **No Persistent Storage**
+   - Free services don't support persistent disks
+   - **Impact**: All state is ephemeral - tasks and replayState only exist while service is running
+   - **Workaround**: Consider upgrading to paid plan with persistent storage, or use external database
+
+4. **Monthly Limits**
+   - 750 free instance hours per month
+   - **Impact**: Services suspended if limit exceeded
+   - **Workaround**: Monitor usage in Render dashboard
+
+5. **WebSocket Considerations**
+   - WebSocket connections may be interrupted during spin-down/restart
+   - **Impact**: Real-time logs may disconnect, UI may need to reconnect
+   - **Workaround**: UI automatically reconnects WebSocket, but users may need to refresh
+
+### Recommendations for Free Plan:
+
+- **For Development/Testing**: Free plan is fine, but expect data loss on restarts
+- **For Production**: Consider upgrading to paid plan ($7/month starter) for:
+  - No spin-down (always-on service)
+  - Persistent storage option
+  - Better reliability
+  - More instance hours
+
+### Current Architecture (Stateless):
+
+The application is designed to work with Render's free plan limitations:
+- In-memory storage (no database required)
+- WebSocket reconnection handling
+- Task state managed per-session
+- Replay state cleaned up after use
+
+However, **all data is lost on service restart or spin-down** - this is expected behavior on the free plan.
+
 ## Development
 
 The app runs on port 5000 with both frontend and backend served together. The workflow "Start application" runs `npm run dev`.
