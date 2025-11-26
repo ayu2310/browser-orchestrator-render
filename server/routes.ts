@@ -31,8 +31,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   }
 
-  function broadcastTaskUpdate(taskId: string, status: string) {
-    const message = JSON.stringify({ type: "taskUpdate", taskId, status });
+  function broadcastTaskUpdate(task: any) {
+    const message = JSON.stringify({ type: "taskUpdate", task });
     connectedClients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
         client.send(message);
@@ -92,51 +92,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           const result = await orchestrator.execute(prompt);
           
-          // Get replay state BEFORE closing (orchestrator.execute already closed session in finally)
-          // But replayState should still be available since it's stored in memory
+          // Get replay state before updating task (must be done before closing)
           const replayState = orchestrator.getReplayState();
-          console.log(`[Routes] Task ${task.id} execution completed`);
-          console.log(`[Routes] Result: success=${result.success}`);
-          console.log(`[Routes] ReplayState:`, replayState ? {
+          console.log(`[Routes] Task ${task.id} execution completed, replayState:`, replayState ? {
             sessionId: replayState.sessionId,
             url: replayState.url,
             actionsCount: replayState.actions.length
           } : "null");
           
-          // Update task status with replayState - this is critical for UI to show replay button
+          // Update task status with replayState
+          let updatedTask;
           if (result.success) {
-            const updatedTask = await storage.updateTask(task.id, {
+            updatedTask = await storage.updateTask(task.id, {
               status: "completed",
               completedAt: Date.now(),
               duration: Date.now() - task.createdAt,
               result: result.result,
               replayState: replayState || undefined,
             });
-            console.log(`[Routes] ✅ Task ${task.id} updated to completed`);
-            console.log(`[Routes] Task status: ${updatedTask?.status}`);
-            console.log(`[Routes] Task has replayState: ${!!updatedTask?.replayState}`);
-            if (updatedTask?.replayState) {
-              console.log(`[Routes] ReplayState details:`, {
-                sessionId: updatedTask.replayState.sessionId,
-                url: updatedTask.replayState.url,
-                actionsCount: updatedTask.replayState.actions.length
-              });
-            }
-            // Broadcast task update to connected clients
-            broadcastTaskUpdate(task.id, "completed");
+            console.log(`[Routes] Task ${task.id} updated to completed`);
+            console.log(`[Routes] ReplayState saved:`, updatedTask?.replayState ? {
+              sessionId: updatedTask.replayState.sessionId,
+              url: updatedTask.replayState.url,
+              actionsCount: updatedTask.replayState.actions.length
+            } : "none");
           } else {
-            const updatedTask = await storage.updateTask(task.id, {
+            updatedTask = await storage.updateTask(task.id, {
               status: "failed",
               completedAt: Date.now(),
               duration: Date.now() - task.createdAt,
               error: result.error,
               replayState: replayState || undefined,
             });
-            console.log(`[Routes] ❌ Task ${task.id} updated to failed`);
-            console.log(`[Routes] Task status: ${updatedTask?.status}`);
-            console.log(`[Routes] Task has replayState: ${!!updatedTask?.replayState}`);
-            // Broadcast task update to connected clients
-            broadcastTaskUpdate(task.id, "failed");
+            console.log(`[Routes] Task ${task.id} updated to failed`);
+            console.log(`[Routes] ReplayState saved:`, updatedTask?.replayState ? "yes" : "no");
+          }
+          
+          // Broadcast task update to all connected clients
+          if (updatedTask) {
+            broadcastTaskUpdate(updatedTask);
           }
         } catch (error) {
           console.error(`[Routes] Task ${task.id} execution error:`, error);
@@ -148,11 +142,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             error: error instanceof Error ? error.message : "Task execution failed",
             replayState: replayState || undefined,
           });
-          console.log(`[Routes] ❌ Task ${task.id} updated to failed after error`);
-          console.log(`[Routes] Task status: ${updatedTask?.status}`);
-          console.log(`[Routes] Task has replayState: ${!!updatedTask?.replayState}`);
-          // Broadcast task update to connected clients
-          broadcastTaskUpdate(task.id, "failed");
+          console.log(`[Routes] Task ${task.id} updated to failed after error`);
+          console.log(`[Routes] ReplayState saved:`, updatedTask?.replayState ? "yes" : "no");
+          
+          // Broadcast task update to all connected clients
+          if (updatedTask) {
+            broadcastTaskUpdate(updatedTask);
+          }
         } finally {
           currentOrchestrator = null;
         }

@@ -30,25 +30,20 @@ export default function Home() {
   const [selectedHistoryTaskId, setSelectedHistoryTaskId] = useState<string | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
-  const keepPollingUntilRef = useRef<number | null>(null);
 
   const { data: tasks = [] } = useQuery<Task[]>({
     queryKey: ["/api/tasks"],
-    refetchInterval: (query) => {
-      // Poll every 2 seconds if there's a current task running
-      if (currentTaskId) return 2000;
-      // Also poll if there are any running tasks in the list
-      const tasks = query.state.data as Task[] | undefined;
-      if (tasks?.some(t => t.status === "running")) return 2000;
-      // Keep polling for a short time after task completion to catch status updates
-      if (keepPollingUntilRef.current && Date.now() < keepPollingUntilRef.current) return 2000;
-      return false;
-    },
   });
 
   const { data: currentTask } = useQuery<Task | null>({
     queryKey: ["/api/tasks/current"],
-    refetchInterval: currentTaskId ? 1000 : false,
+    refetchInterval: (query) => {
+      // Keep polling if we have a currentTaskId OR if the current task is still running
+      const task = query.state.data;
+      if (currentTaskId) return 1000;
+      if (task && task.status === "running") return 1000;
+      return false;
+    },
   });
 
   const { data: historicalLogs = [] } = useQuery<LogEntry[]>({
@@ -126,24 +121,19 @@ export default function Home() {
 
   useEffect(() => {
     if (currentTask?.status === "completed" || currentTask?.status === "failed") {
-      // Set a timeout to keep polling tasks list for 10 seconds after completion
-      // This ensures we catch the status update even if there's a delay
-      keepPollingUntilRef.current = Date.now() + 10000;
-      
-      // Immediately invalidate and refetch tasks to get updated status and replayState
-      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/tasks/current"] });
-      
-      // Force a refetch of tasks to ensure we have the latest data with replayState
+      // Immediately refetch to get the latest task data including replayState
+      queryClient.refetchQueries({ queryKey: ["/api/tasks/current"] });
       queryClient.refetchQueries({ queryKey: ["/api/tasks"] });
       
       // After a delay, clear current task and select it in history
-      setTimeout(() => {
+      // This gives time for the replay button to be visible
+      const timeoutId = setTimeout(() => {
         setCurrentTaskId(null);
         setSelectedHistoryTaskId(currentTask.id);
-        // Final refetch to ensure history shows the completed task with replay button
-        queryClient.refetchQueries({ queryKey: ["/api/tasks"] });
-      }, 2000); // Reduced delay but ensure replay button is visible
+        queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+      }, 2000); // Reduced delay but still enough to see replay button
+      
+      return () => clearTimeout(timeoutId);
     }
   }, [currentTask?.status, currentTask?.id, currentTask?.replayState]);
 
@@ -153,21 +143,11 @@ export default function Home() {
     }
   }, [historicalLogs, selectedHistoryTaskId, currentTaskId]);
 
-  // Refetch tasks list when currentTask becomes null (task completed and cleared from storage)
-  useEffect(() => {
-    if (!currentTask && currentTaskId) {
-      // Task was cleared from storage, refetch tasks list to get updated status
-      queryClient.refetchQueries({ queryKey: ["/api/tasks"] });
-    }
-  }, [currentTask, currentTaskId]);
-
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
 
   useEffect(() => {
-    if (!currentTaskId) return;
-
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws`;
     const ws = new WebSocket(wsUrl);
@@ -176,18 +156,39 @@ export default function Home() {
       const data = JSON.parse(event.data);
       if (data.type === "log" && data.taskId === currentTaskId) {
         setLogs((prev) => [...prev, data.log]);
-      } else if (data.type === "taskUpdate" && data.taskId === currentTaskId) {
-        // Task status changed - immediately refetch to get updated task with replayState
-        console.log(`[UI] Task ${data.taskId} status updated to ${data.status}`);
-        queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/tasks/current"] });
-        queryClient.refetchQueries({ queryKey: ["/api/tasks"] });
-        queryClient.refetchQueries({ queryKey: ["/api/tasks/current"] });
+      } else if (data.type === "taskUpdate") {
+        // Handle task status updates from server
+        const updatedTask = data.task;
+        if (updatedTask) {
+          // Update the tasks list cache
+          queryClient.setQueryData<Task[]>(["/api/tasks"], (oldTasks = []) => {
+            const taskIndex = oldTasks.findIndex(t => t.id === updatedTask.id);
+            if (taskIndex >= 0) {
+              const newTasks = [...oldTasks];
+              newTasks[taskIndex] = updatedTask;
+              return newTasks;
+            } else {
+              // Task not in list yet, add it at the beginning
+              return [updatedTask, ...oldTasks];
+            }
+          });
+          
+          // Update current task cache if it matches
+          if (updatedTask.id === currentTaskId) {
+            queryClient.setQueryData<Task | null>(["/api/tasks/current"], updatedTask);
+            
+            // If task completed/failed, also invalidate to trigger refetch
+            if (updatedTask.status === "completed" || updatedTask.status === "failed") {
+              queryClient.invalidateQueries({ queryKey: ["/api/tasks/current"] });
+              queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+            }
+          }
+        }
       }
     };
 
     return () => ws.close();
-  }, [currentTaskId]);
+  }, [currentTaskId, selectedHistoryTaskId]);
 
   const handleExecute = () => {
     if (prompt.trim()) {
