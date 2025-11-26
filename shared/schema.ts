@@ -17,6 +17,15 @@ export const logEntrySchema = z.object({
 });
 export type LogEntry = z.infer<typeof logEntrySchema>;
 
+export const replayStateSchema = z.object({
+  sessionId: z.string(),
+  url: z.string().optional(),
+  actions: z.array(z.object({
+    function: z.string(),
+    arguments: z.record(z.any()),
+  })),
+});
+
 export const taskSchema = z.object({
   id: z.string(),
   prompt: z.string(),
@@ -26,6 +35,7 @@ export const taskSchema = z.object({
   duration: z.number().optional(),
   result: z.any().optional(),
   error: z.string().optional(),
+  replayState: replayStateSchema.optional(),
 });
 export type Task = z.infer<typeof taskSchema>;
 

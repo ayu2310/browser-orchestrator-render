@@ -46,10 +46,9 @@ export class MemStorage implements IStorage {
     const updated = { ...task, ...updates };
     this.tasks.set(id, updated);
     
-    // Only clear currentTaskId if this was the current task
-    if ((updated.status === "completed" || updated.status === "failed") && this.currentTaskId === id) {
-      this.currentTaskId = null;
-    }
+    // Don't clear currentTaskId immediately when task completes
+    // Keep it set so the client can see the completed task with replayState
+    // The client will handle clearing it when ready via setCurrentTaskId(null)
     
     return updated;
   }
