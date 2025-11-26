@@ -33,17 +33,12 @@ export default function Home() {
 
   const { data: tasks = [] } = useQuery<Task[]>({
     queryKey: ["/api/tasks"],
+    refetchInterval: 2000, // Refetch every 2 seconds to catch task updates
   });
 
   const { data: currentTask } = useQuery<Task | null>({
     queryKey: ["/api/tasks/current"],
-    refetchInterval: (query) => {
-      // Keep polling if we have a currentTaskId OR if the current task is still running
-      const task = query.state.data;
-      if (currentTaskId) return 1000;
-      if (task && task.status === "running") return 1000;
-      return false;
-    },
+    refetchInterval: currentTaskId ? 1000 : false,
   });
 
   const { data: historicalLogs = [] } = useQuery<LogEntry[]>({
@@ -121,19 +116,16 @@ export default function Home() {
 
   useEffect(() => {
     if (currentTask?.status === "completed" || currentTask?.status === "failed") {
-      // Immediately refetch to get the latest task data including replayState
-      queryClient.refetchQueries({ queryKey: ["/api/tasks/current"] });
-      queryClient.refetchQueries({ queryKey: ["/api/tasks"] });
+      // Invalidate queries to refresh task list and current task
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks/current"] });
       
       // After a delay, clear current task and select it in history
-      // This gives time for the replay button to be visible
-      const timeoutId = setTimeout(() => {
+      setTimeout(() => {
         setCurrentTaskId(null);
         setSelectedHistoryTaskId(currentTask.id);
         queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
-      }, 2000); // Reduced delay but still enough to see replay button
-      
-      return () => clearTimeout(timeoutId);
+      }, 3000); // Increased delay to ensure replay button is visible
     }
   }, [currentTask?.status, currentTask?.id, currentTask?.replayState]);
 
@@ -147,7 +139,10 @@ export default function Home() {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
 
+  // WebSocket for logs (only when there's a current task)
   useEffect(() => {
+    if (!currentTaskId) return;
+
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws`;
     const ws = new WebSocket(wsUrl);
@@ -156,39 +151,38 @@ export default function Home() {
       const data = JSON.parse(event.data);
       if (data.type === "log" && data.taskId === currentTaskId) {
         setLogs((prev) => [...prev, data.log]);
-      } else if (data.type === "taskUpdate") {
-        // Handle task status updates from server
-        const updatedTask = data.task;
-        if (updatedTask) {
-          // Update the tasks list cache
-          queryClient.setQueryData<Task[]>(["/api/tasks"], (oldTasks = []) => {
-            const taskIndex = oldTasks.findIndex(t => t.id === updatedTask.id);
-            if (taskIndex >= 0) {
-              const newTasks = [...oldTasks];
-              newTasks[taskIndex] = updatedTask;
-              return newTasks;
-            } else {
-              // Task not in list yet, add it at the beginning
-              return [updatedTask, ...oldTasks];
-            }
-          });
-          
-          // Update current task cache if it matches
-          if (updatedTask.id === currentTaskId) {
-            queryClient.setQueryData<Task | null>(["/api/tasks/current"], updatedTask);
-            
-            // If task completed/failed, also invalidate to trigger refetch
-            if (updatedTask.status === "completed" || updatedTask.status === "failed") {
-              queryClient.invalidateQueries({ queryKey: ["/api/tasks/current"] });
-              queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
-            }
-          }
-        }
       }
     };
 
     return () => ws.close();
-  }, [currentTaskId, selectedHistoryTaskId]);
+  }, [currentTaskId]);
+
+  // Global WebSocket for task updates (always connected)
+  useEffect(() => {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    const ws = new WebSocket(wsUrl);
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === "task_update") {
+          // Task was updated, refresh the tasks list
+          console.log("[UI] Task update received, refreshing tasks list");
+          queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/tasks/current"] });
+        }
+      } catch (error) {
+        console.error("[UI] Error parsing WebSocket message:", error);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error("[UI] WebSocket error:", error);
+    };
+
+    return () => ws.close();
+  }, []);
 
   const handleExecute = () => {
     if (prompt.trim()) {

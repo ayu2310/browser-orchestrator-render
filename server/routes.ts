@@ -140,6 +140,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             
             // Broadcast task update to connected clients
             if (updatedTask) {
+              console.log(`[Routes] Broadcasting task update for ${updatedTask.id}, replayState exists:`, !!updatedTask.replayState);
               broadcastTaskUpdate(updatedTask);
             }
           } catch (updateError) {
