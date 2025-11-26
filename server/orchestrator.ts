@@ -39,14 +39,24 @@ export class Orchestrator {
   async initialize(): Promise<void> {
     await this.onLog("info", "Initializing orchestrator and connecting to MCP server...");
     try {
+      // Ensure MCP client is connected
+      await this.mcpClient.connect();
+      await this.onLog("info", "MCP server connection established");
+      
       this.tools = await this.mcpClient.listTools();
       if (this.tools.length > 0) {
         await this.onLog("success", `Loaded ${this.tools.length} MCP tools`);
+        // Log available tool names for debugging
+        const toolNames = this.tools.map(t => t.name).join(", ");
+        await this.onLog("info", `Available tools: ${toolNames}`);
       } else {
-        await this.onLog("warning", "No tools available from MCP server");
+        await this.onLog("error", "No tools available from MCP server. Check MCP server connection and configuration.");
+        throw new Error("No MCP tools available. Cannot proceed with automation.");
       }
     } catch (error) {
-      await this.onLog("error", `Failed to initialize: ${error instanceof Error ? error.message : "Unknown error"}`);
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      await this.onLog("error", `Failed to initialize: ${errorMessage}`);
+      console.error("[Orchestrator] Initialization error:", error);
       throw error;
     }
   }
@@ -83,15 +93,24 @@ Your job is to:
 2. Break it down into a series of browser actions
 3. Call the appropriate MCP functions in the correct order
 4. The sessionId is automatically managed - just call functions normally
-5. After each action (navigate, click, fill, etc), take a screenshot to see the current state
-6. Look at the screenshot images provided to determine the next action needed
-7. Repeat until the task is complete
+5. CRITICAL: After EVERY action (navigate, act, observe, etc), a screenshot will be automatically taken
+6. You MUST analyze the screenshot images provided to determine the next action needed
+7. Use the visual information from screenshots to identify elements, text, buttons, forms, etc.
+8. Repeat until the task is complete
+
+CRITICAL WORKFLOW:
+- Step 1: Call browserbase_stagehand_navigate to go to a URL
+- Step 2: Screenshot is automatically taken and shown to you - ANALYZE IT
+- Step 3: Based on screenshot, call browserbase_stagehand_observe to find elements OR browserbase_stagehand_act to perform actions
+- Step 4: Screenshot is automatically taken after each action - ANALYZE IT
+- Step 5: Continue until task is complete
 
 Important Guidelines:
-- ALWAYS take a screenshot after navigation or any action to see the current state
-- Pay close attention to the screenshot images provided - they show you what's on screen
-- Use the visual information to identify elements to click, text to find, form fields to fill
-- Be persistent: if an action fails, try alternative approaches based on what you see
+- Screenshots are automatically captured after navigate and act calls - you will see them in the response
+- ALWAYS analyze the screenshot before deciding the next action
+- Use browserbase_stagehand_observe with returnAction: true to get deterministic selectors
+- Use browserbase_stagehand_act with either 'action' (natural language) or 'observation' (deterministic)
+- If an action fails, look at the screenshot to understand why and try alternative approaches
 - When you see the desired result in the screenshot, report success
 
 Available tools:
@@ -199,26 +218,37 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
                 await this.onLog("info", "Screenshot captured", { screenshot: screenshotData });
               }
               
-              // Automatically take a screenshot after navigation or action to see current state
-              if (!screenshotData && ["browserbase_stagehand_act", "browserbase_stagehand_navigate"].includes(functionName)) {
+              // Automatically take a screenshot after ANY action that affects the page state
+              // This includes: navigate, act, observe (if it changes state), etc.
+              const shouldTakeScreenshot = [
+                "browserbase_stagehand_act",
+                "browserbase_stagehand_navigate",
+                "browserbase_stagehand_observe", // Sometimes observe can trigger page changes
+              ].includes(functionName);
+              
+              if (!screenshotData && shouldTakeScreenshot) {
                 await this.onLog("info", "Taking screenshot to see current state...");
-                const screenshotResult = await this.mcpClient.callFunction({
-                  function: "browserbase_screenshot",
-                  arguments: {},
-                });
-                
-                if (!screenshotResult.error) {
-                  if (screenshotResult.screenshot) {
-                    screenshotData = screenshotResult.screenshot;
-                    this.lastScreenshot = screenshotData;
-                    console.log("[Orchestrator] Screenshot captured and normalized, length:", screenshotData.length);
-                    // Log screenshot for UI display - ensure it's in proper format
-                    await this.onLog("info", "Screenshot captured", { screenshot: screenshotData });
+                try {
+                  const screenshotResult = await this.mcpClient.callFunction({
+                    function: "browserbase_screenshot",
+                    arguments: { sessionId: result.sessionId || sessionId },
+                  });
+                  
+                  if (!screenshotResult.error) {
+                    if (screenshotResult.screenshot) {
+                      screenshotData = screenshotResult.screenshot;
+                      this.lastScreenshot = screenshotData;
+                      console.log("[Orchestrator] Screenshot captured and normalized, length:", screenshotData.length);
+                      // Log screenshot for UI display - ensure it's in proper format
+                      await this.onLog("info", "Screenshot captured", { screenshot: screenshotData });
+                    } else {
+                      await this.onLog("warning", "Screenshot function returned no image data");
+                    }
                   } else {
-                    await this.onLog("warning", "Screenshot function returned no image data");
+                    await this.onLog("warning", `Failed to capture screenshot: ${screenshotResult.error}`);
                   }
-                } else {
-                  await this.onLog("warning", `Failed to capture screenshot: ${screenshotResult.error}`);
+                } catch (screenshotError) {
+                  await this.onLog("warning", `Screenshot capture error: ${screenshotError instanceof Error ? screenshotError.message : "Unknown error"}`);
                 }
               }
               

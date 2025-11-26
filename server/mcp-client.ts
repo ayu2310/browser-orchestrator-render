@@ -17,35 +17,73 @@ export class McpClient {
   }
 
   async connect(): Promise<void> {
-    try {
-      const transport = new StreamableHTTPClientTransport(new URL(this.config.url));
+    const maxRetries = 3;
+    let lastError: Error | null = null;
 
-      this.client = new Client({
-        name: "browserbase-orchestrator",
-        version: "1.0.0",
-      });
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`[MCP] Connecting to ${this.config.url} (attempt ${attempt}/${maxRetries})...`);
+        const transport = new StreamableHTTPClientTransport(new URL(this.config.url));
 
-      await this.client.connect(transport);
-    } catch (error) {
-      console.error("Failed to connect to MCP server:", error);
-      throw error;
+        this.client = new Client({
+          name: "browserbase-orchestrator",
+          version: "1.0.0",
+        });
+
+        // Add error handler
+        this.client.onerror = (error) => {
+          console.error("[MCP] Client error:", error);
+        };
+
+        await this.client.connect(transport);
+        console.log("[MCP] Successfully connected to MCP server");
+        return; // Success, exit retry loop
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        console.error(`[MCP] Connection attempt ${attempt} failed:`, lastError.message);
+        
+        if (attempt < maxRetries) {
+          const delay = attempt * 1000; // Exponential backoff: 1s, 2s, 3s
+          console.log(`[MCP] Retrying in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
     }
+
+    // All retries failed
+    throw new Error(`Failed to connect to MCP server after ${maxRetries} attempts: ${lastError?.message || "Unknown error"}`);
   }
 
   async listTools(): Promise<any[]> {
     try {
+      // Ensure connection is established
       if (!this.client) {
         await this.connect();
       }
 
+      // Verify client is still valid
       if (!this.client) {
-        throw new Error("Failed to connect to MCP server");
+        throw new Error("MCP client not initialized");
       }
 
+      console.log("[MCP] Listing available tools...");
       const response = await this.client.listTools();
-      return Array.isArray(response.tools) ? response.tools : [];
+      const tools = Array.isArray(response.tools) ? response.tools : [];
+      console.log(`[MCP] Found ${tools.length} tools`);
+      return tools;
     } catch (error) {
-      console.error("Failed to list tools:", error);
+      console.error("[MCP] Failed to list tools:", error);
+      // Try to reconnect once
+      try {
+        this.client = null;
+        await this.connect();
+        if (this.client) {
+          const response = await this.client.listTools();
+          return Array.isArray(response.tools) ? response.tools : [];
+        }
+      } catch (retryError) {
+        console.error("[MCP] Retry also failed:", retryError);
+      }
       return [];
     }
   }
@@ -252,12 +290,14 @@ export class McpClient {
     functionCall: Omit<McpFunctionCall, "result" | "error">
   ): Promise<McpFunctionCall & { sessionId?: string; screenshot?: string }> {
     try {
+      // Ensure connection is established
       if (!this.client) {
         await this.connect();
       }
 
+      // Verify client is still valid
       if (!this.client) {
-        throw new Error("Failed to connect to MCP server");
+        throw new Error("MCP client not initialized. Connection may have failed.");
       }
 
       // Add sessionId to arguments if we have one (except for session_create)

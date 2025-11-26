@@ -53,8 +53,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const task = await storage.createTask(prompt);
 
+      const mcpServerUrl = process.env.MCP_SERVER_URL || "https://mcp-browser-automation-render.onrender.com/api/mcp";
+      console.log(`[Routes] Using MCP server URL: ${mcpServerUrl}`);
+      
       const mcpClient = new McpClient({
-        url: process.env.MCP_SERVER_URL || "http://localhost:3001",
+        url: mcpServerUrl,
         apiKey: process.env.MCP_API_KEY,
       });
 
@@ -163,8 +166,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Create a new task for the replay
       const replayTask = await storage.createTask(`Replay: ${task.prompt}`);
 
+      const mcpServerUrl = process.env.MCP_SERVER_URL || "https://mcp-browser-automation-render.onrender.com/api/mcp";
+      console.log(`[Routes] Using MCP server URL for replay: ${mcpServerUrl}`);
+      
       const mcpClient = new McpClient({
-        url: process.env.MCP_SERVER_URL || "http://localhost:3001",
+        url: mcpServerUrl,
         apiKey: process.env.MCP_API_KEY,
       });
 
