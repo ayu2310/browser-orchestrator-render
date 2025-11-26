@@ -115,13 +115,18 @@ export default function Home() {
 
   useEffect(() => {
     if (currentTask?.status === "completed" || currentTask?.status === "failed") {
+      // Invalidate queries to refresh task list and current task
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks/current"] });
+      
+      // After a delay, clear current task and select it in history
       setTimeout(() => {
         setCurrentTaskId(null);
         setSelectedHistoryTaskId(currentTask.id);
         queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
-      }, 2000);
+      }, 3000); // Increased delay to ensure replay button is visible
     }
-  }, [currentTask?.status, currentTask?.id]);
+  }, [currentTask?.status, currentTask?.id, currentTask?.replayState]);
 
   useEffect(() => {
     if (selectedHistoryTaskId && !currentTaskId) {

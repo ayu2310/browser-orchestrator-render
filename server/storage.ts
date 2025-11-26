@@ -46,7 +46,8 @@ export class MemStorage implements IStorage {
     const updated = { ...task, ...updates };
     this.tasks.set(id, updated);
     
-    if (updated.status === "completed" || updated.status === "failed") {
+    // Only clear currentTaskId if this was the current task
+    if ((updated.status === "completed" || updated.status === "failed") && this.currentTaskId === id) {
       this.currentTaskId = null;
     }
     
