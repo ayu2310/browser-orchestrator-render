@@ -85,23 +85,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           // Get replay state before updating task
           const replayState = orchestrator.getReplayState();
+          console.log(`[Routes] Task ${task.id} completed, replayState:`, replayState ? {
+            sessionId: replayState.sessionId,
+            url: replayState.url,
+            actionsCount: replayState.actions.length
+          } : "null");
           
           if (result.success) {
-            await storage.updateTask(task.id, {
+            const updatedTask = await storage.updateTask(task.id, {
               status: "completed",
               completedAt: Date.now(),
               duration: Date.now() - task.createdAt,
               result: result.result,
               replayState: replayState || undefined,
             });
+            console.log(`[Routes] Task ${task.id} updated to completed, replayState exists:`, !!updatedTask?.replayState);
           } else {
-            await storage.updateTask(task.id, {
+            const updatedTask = await storage.updateTask(task.id, {
               status: "failed",
               completedAt: Date.now(),
               duration: Date.now() - task.createdAt,
               error: result.error,
               replayState: replayState || undefined,
             });
+            console.log(`[Routes] Task ${task.id} updated to failed, replayState exists:`, !!updatedTask?.replayState);
           }
         } catch (error) {
           const replayState = orchestrator.getReplayState();
@@ -112,9 +119,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             error: error instanceof Error ? error.message : "Task execution failed",
             replayState: replayState || undefined,
           });
+        } finally {
+          currentOrchestrator = null;
         }
-        
-        currentOrchestrator = null;
       });
     } catch (error) {
       res.status(400).json({
@@ -203,6 +210,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
               throw new Error(`Navigation failed: ${navigateResult.error}`);
             }
             await log("success", `Navigated to ${url}`);
+            
+            // Take screenshot after navigation
+            await log("info", "Taking screenshot after navigation...");
+            const screenshotResult = await mcpClient.callFunction({
+              function: "browserbase_screenshot",
+              arguments: { sessionId },
+            });
+            if (!screenshotResult.error && screenshotResult.screenshot) {
+              await log("info", "Screenshot captured", { screenshot: screenshotResult.screenshot });
+            } else {
+              await log("warning", "Failed to capture screenshot after navigation");
+            }
           }
 
           // Execute all cached actions deterministically
@@ -222,8 +241,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
               await log("error", `Action failed: ${actionResult.error}`);
             } else {
               await log("success", `${cleanFunctionName} completed successfully`);
+              
+              // Take screenshot after action if it's an act function
+              if (action.function === "browserbase_stagehand_act") {
+                await log("info", "Taking screenshot after action...");
+                const screenshotResult = await mcpClient.callFunction({
+                  function: "browserbase_screenshot",
+                  arguments: { sessionId },
+                });
+                if (!screenshotResult.error && screenshotResult.screenshot) {
+                  await log("info", "Screenshot captured", { screenshot: screenshotResult.screenshot });
+                }
+              }
             }
           }
+
+          await log("info", "Closing browser session...");
+          await mcpClient.close();
+          await log("success", "Replay completed successfully");
 
           await storage.updateTask(replayTask.id, {
             status: "completed",
@@ -236,7 +271,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await storage.updateTask(task.id, {
             replayState: undefined,
           });
+          console.log(`[Routes] Replay completed, cleaned up replayState from task ${task.id}`);
         } catch (error) {
+          await log("error", `Replay failed: ${error instanceof Error ? error.message : "Unknown error"}`);
           await storage.updateTask(replayTask.id, {
             status: "failed",
             completedAt: Date.now(),
@@ -245,7 +282,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         } finally {
           // Close the session and reset orchestrator
-          await mcpClient.close();
+          try {
+            await mcpClient.close();
+          } catch (closeError) {
+            console.error("[Routes] Error closing MCP client:", closeError);
+          }
           currentOrchestrator = null;
         }
       });
