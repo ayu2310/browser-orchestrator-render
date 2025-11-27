@@ -28,8 +28,12 @@ export default function Home() {
   const [prompt, setPrompt] = useState("");
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const [selectedHistoryTaskId, setSelectedHistoryTaskId] = useState<string | null>(null);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const logsEndRef = useRef<HTMLDivElement>(null);
+  const [executionLogs, setExecutionLogs] = useState<LogEntry[]>([]);
+  const [replayLogs, setReplayLogs] = useState<LogEntry[]>([]);
+  const [originalTaskId, setOriginalTaskId] = useState<string | null>(null);
+  const [replayTaskId, setReplayTaskId] = useState<string | null>(null);
+  const executionLogsEndRef = useRef<HTMLDivElement>(null);
+  const replayLogsEndRef = useRef<HTMLDivElement>(null);
 
   const { data: tasks = [] } = useQuery<Task[]>({
     queryKey: ["/api/tasks"],
@@ -61,7 +65,10 @@ export default function Home() {
       setCurrentTaskId(data.id);
       setSelectedHistoryTaskId(null);
       setPrompt("");
-      setLogs([]);
+      setExecutionLogs([]);
+      setReplayLogs([]);
+      setOriginalTaskId(null);
+      setReplayTaskId(null);
       queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
       queryClient.invalidateQueries({ queryKey: ["/api/tasks/current"] });
     },
@@ -69,13 +76,16 @@ export default function Home() {
       const message = error?.message || "Failed to execute task";
       setCurrentTaskId(null);
       setSelectedHistoryTaskId(null);
-      setLogs([{
+      setExecutionLogs([{
         id: "error-" + Date.now(),
         taskId: "error",
         timestamp: Date.now(),
         level: "error",
         message,
       }]);
+      setReplayLogs([]);
+      setOriginalTaskId(null);
+      setReplayTaskId(null);
     },
   });
 
@@ -83,6 +93,8 @@ export default function Home() {
     mutationFn: () => apiRequest("POST", "/api/tasks/cancel", {}),
     onSuccess: () => {
       setCurrentTaskId(null);
+      setReplayTaskId(null);
+      setOriginalTaskId(null);
       queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
       queryClient.invalidateQueries({ queryKey: ["/api/tasks/current"] });
     },
@@ -94,17 +106,23 @@ export default function Home() {
       return await response.json();
     },
     onSuccess: async (data: Task, variables: string) => {
-      // Load original task logs first, then append replay logs
+      // Load original task logs for execution logs section
+      const originalTaskId = variables;
+      setOriginalTaskId(originalTaskId);
+      setReplayTaskId(data.id);
+      
       try {
-        const originalTaskId = variables;
         const logsResponse = await fetch(`/api/tasks/${originalTaskId}/logs`);
         if (logsResponse.ok) {
           const originalLogs = await logsResponse.json();
-          setLogs(originalLogs);
+          setExecutionLogs(originalLogs);
         }
       } catch (error) {
         console.error("Failed to load original task logs:", error);
       }
+      
+      // Clear replay logs for new replay
+      setReplayLogs([]);
       
       setCurrentTaskId(data.id);
       setSelectedHistoryTaskId(null);
@@ -120,6 +138,9 @@ export default function Home() {
       return await response.json();
     },
     onSuccess: () => {
+      setReplayLogs([]);
+      setReplayTaskId(null);
+      setOriginalTaskId(null);
       queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
       queryClient.invalidateQueries({ queryKey: ["/api/tasks/current"] });
     },
@@ -132,23 +153,43 @@ export default function Home() {
       queryClient.invalidateQueries({ queryKey: ["/api/tasks/current"] });
       
       // After a delay, clear current task and select it in history
-      setTimeout(() => {
-        setCurrentTaskId(null);
-        setSelectedHistoryTaskId(currentTask.id);
-        queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
-      }, 3000); // Increased delay to ensure replay button is visible
+      // But only if it's not a replay task
+      if (!currentTask.prompt.startsWith("Replay: ")) {
+        setTimeout(() => {
+          setCurrentTaskId(null);
+          setSelectedHistoryTaskId(currentTask.id);
+          setReplayTaskId(null);
+          setOriginalTaskId(null);
+          queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+        }, 3000); // Increased delay to ensure replay button is visible
+      } else {
+        // If it's a replay task that completed, clear replay state
+        setTimeout(() => {
+          setCurrentTaskId(null);
+          setReplayTaskId(null);
+          setOriginalTaskId(null);
+          queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+        }, 2000);
+      }
     }
-  }, [currentTask?.status, currentTask?.id, currentTask?.replayState]);
+  }, [currentTask?.status, currentTask?.id, currentTask?.replayState, currentTask?.prompt]);
 
   useEffect(() => {
     if (selectedHistoryTaskId && !currentTaskId) {
-      setLogs(historicalLogs);
+      setExecutionLogs(historicalLogs);
+      setReplayLogs([]);
+      setOriginalTaskId(null);
+      setReplayTaskId(null);
     }
   }, [historicalLogs, selectedHistoryTaskId, currentTaskId]);
 
   useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logs]);
+    executionLogsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [executionLogs]);
+
+  useEffect(() => {
+    replayLogsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [replayLogs]);
 
   // WebSocket for logs (only when there's a current task)
   useEffect(() => {
@@ -161,12 +202,19 @@ export default function Home() {
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (data.type === "log" && data.taskId === currentTaskId) {
-        setLogs((prev) => [...prev, data.log]);
+        // Check if this is a replay task by comparing taskId with replayTaskId
+        if (replayTaskId && data.taskId === replayTaskId) {
+          // Add to replay logs
+          setReplayLogs((prev) => [...prev, data.log]);
+        } else {
+          // Add to execution logs
+          setExecutionLogs((prev) => [...prev, data.log]);
+        }
       }
     };
 
     return () => ws.close();
-  }, [currentTaskId]);
+  }, [currentTaskId, replayTaskId]);
 
   // Global WebSocket for task updates (always connected)
   useEffect(() => {
@@ -346,21 +394,48 @@ export default function Home() {
               </CardHeader>
               <CardContent>
                 <ScrollArea className="h-96 w-full rounded-md border bg-muted/30 p-4">
-                  {logs.length === 0 ? (
+                  {executionLogs.length === 0 ? (
                     <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
                       No logs yet. Execute a task to see logs here.
                     </div>
                   ) : (
                     <div className="space-y-2 font-mono text-sm">
-                      {logs.map((log) => (
+                      {executionLogs.map((log) => (
                         <LogLine key={log.id} log={log} />
                       ))}
-                      <div ref={logsEndRef} />
+                      <div ref={executionLogsEndRef} />
                     </div>
                   )}
                 </ScrollArea>
               </CardContent>
             </Card>
+
+            {replayTaskId && (
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center gap-2">
+                    <RotateCcw className="w-5 h-5" />
+                    <CardTitle className="text-lg">Replay Logs</CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <ScrollArea className="h-96 w-full rounded-md border bg-muted/30 p-4">
+                    {replayLogs.length === 0 ? (
+                      <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+                        Replay in progress... Logs will appear here.
+                      </div>
+                    ) : (
+                      <div className="space-y-2 font-mono text-sm">
+                        {replayLogs.map((log) => (
+                          <LogLine key={log.id} log={log} />
+                        ))}
+                        <div ref={replayLogsEndRef} />
+                      </div>
+                    )}
+                  </ScrollArea>
+                </CardContent>
+              </Card>
+            )}
           </div>
 
           <div>
