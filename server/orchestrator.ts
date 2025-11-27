@@ -75,8 +75,8 @@ export class Orchestrator {
       this.tools = await this.mcpClient.listTools();
       if (this.tools.length > 0) {
         await this.onLog("success", `Loaded ${this.tools.length} MCP tools`);
-        // Log available tool names for debugging
-        const toolNames = this.tools.map(t => t.name).join(", ");
+        // Log available tool names for debugging (cleaned for UI)
+        const toolNames = this.tools.map(t => this.cleanFunctionName(t.name)).join(", ");
         await this.onLog("info", `Available tools: ${toolNames}`);
       } else {
         await this.onLog("error", "No tools available from MCP server. Check MCP server connection and configuration.");
