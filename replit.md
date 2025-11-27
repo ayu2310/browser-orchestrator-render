@@ -16,7 +16,7 @@ AI-powered browser automation orchestrator that connects to a BrowserBase MCP (M
   - `GET /api/tasks/current` - Get currently running task
   - `GET /api/tasks/:id/logs` - Get logs for a specific task
   - `POST /api/tasks/execute` - Execute a new automation task
-- `POST /api/tasks/cancel` - Cancel current running task
+  - `POST /api/tasks/cancel` - Cancel current running task
 - `POST /api/tasks/:id/replay` - Replay a completed task with cached session/actions
 - `POST /api/tasks/:id/cancel-replay` - Cancel/delete replay state for a task
 - **WebSocket Server**: Real-time log broadcasting at `/ws`

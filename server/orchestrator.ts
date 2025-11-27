@@ -201,7 +201,7 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
             const cleanFunctionName = this.cleanFunctionName(functionName);
             const cleanArgs = this.cleanArgsForUI(functionArgs);
             const cleanArgsStr = Object.keys(cleanArgs).length > 0 ? JSON.stringify(cleanArgs) : "";
-            
+
             await this.onLog(
               "info",
               `Calling ${cleanFunctionName}${cleanArgsStr ? ` with args: ${cleanArgsStr}` : ""}`
@@ -265,24 +265,24 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
               if (!screenshotData && shouldTakeScreenshot) {
                 await this.onLog("info", "Taking screenshot to see current state...");
                 try {
-                  const screenshotResult = await this.mcpClient.callFunction({
-                    function: "browserbase_screenshot",
+                const screenshotResult = await this.mcpClient.callFunction({
+                  function: "browserbase_screenshot",
                     arguments: { sessionId: result.sessionId || sessionId },
-                  });
-                  
-                  if (!screenshotResult.error) {
-                    if (screenshotResult.screenshot) {
-                      screenshotData = screenshotResult.screenshot;
-                      this.lastScreenshot = screenshotData;
+                });
+                
+                if (!screenshotResult.error) {
+                  if (screenshotResult.screenshot) {
+                    screenshotData = screenshotResult.screenshot;
+                    this.lastScreenshot = screenshotData;
                       console.log("[Orchestrator] Screenshot captured and normalized, length:", screenshotData.length);
                       // Log screenshot for UI display - ensure it's in proper format
                       // Note: storage.addLog will extract screenshot from details and add it to log.screenshot
-                      await this.onLog("info", "Screenshot captured", { screenshot: screenshotData });
+                    await this.onLog("info", "Screenshot captured", { screenshot: screenshotData });
                     } else {
                       await this.onLog("warning", "Screenshot function returned no image data");
-                    }
-                  } else {
-                    await this.onLog("warning", `Failed to capture screenshot: ${screenshotResult.error}`);
+                  }
+                } else {
+                  await this.onLog("warning", `Failed to capture screenshot: ${screenshotResult.error}`);
                   }
                 } catch (screenshotError) {
                   await this.onLog("warning", `Screenshot capture error: ${screenshotError instanceof Error ? screenshotError.message : "Unknown error"}`);

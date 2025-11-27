@@ -64,7 +64,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const mcpServerUrl = process.env.MCP_SERVER_URL || "https://mcp-browser-automation-render.onrender.com/api/mcp";
       console.log(`[Routes] Using MCP server URL: ${mcpServerUrl}`);
-      
+
       const mcpClient = new McpClient({
         url: mcpServerUrl,
         apiKey: process.env.MCP_API_KEY,
@@ -114,10 +114,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             let updatedTask: Task | undefined;
             if (result && result.success) {
               updatedTask = await storage.updateTask(task.id, {
-                status: "completed",
-                completedAt: Date.now(),
-                duration: Date.now() - task.createdAt,
-                result: result.result,
+              status: "completed",
+              completedAt: Date.now(),
+              duration: Date.now() - task.createdAt,
+              result: result.result,
                 replayState: replayState || undefined,
               });
               console.log(`[Routes] ✅ Task ${task.id} updated to completed`);
@@ -126,11 +126,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 url: updatedTask.replayState.url,
                 actionsCount: updatedTask.replayState.actions.length
               } : "none");
-            } else {
+          } else {
               updatedTask = await storage.updateTask(task.id, {
-                status: "failed",
-                completedAt: Date.now(),
-                duration: Date.now() - task.createdAt,
+              status: "failed",
+              completedAt: Date.now(),
+              duration: Date.now() - task.createdAt,
                 error: result?.error || "Task execution failed",
                 replayState: replayState || undefined,
               });
@@ -146,7 +146,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           } catch (updateError) {
             console.error(`[Routes] CRITICAL: Failed to update task ${task.id} status:`, updateError);
           } finally {
-            currentOrchestrator = null;
+        currentOrchestrator = null;
           }
       });
     } catch (error) {
@@ -213,9 +213,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         broadcastLog(logEntry);
       };
 
-      // Set replay task as current task so WebSocket can route logs correctly
-      await storage.updateTask(replayTask.id, { status: "running" });
-      
       res.json(replayTask);
 
       setImmediate(async () => {

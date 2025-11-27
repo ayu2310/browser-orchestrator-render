@@ -21,24 +21,24 @@ export class McpClient {
     let lastError: Error | null = null;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
+    try {
         console.log(`[MCP] Connecting to ${this.config.url} (attempt ${attempt}/${maxRetries})...`);
-        const transport = new StreamableHTTPClientTransport(new URL(this.config.url));
+      const transport = new StreamableHTTPClientTransport(new URL(this.config.url));
 
-        this.client = new Client({
-          name: "browserbase-orchestrator",
-          version: "1.0.0",
-        });
+      this.client = new Client({
+        name: "browserbase-orchestrator",
+        version: "1.0.0",
+      });
 
         // Add error handler
         this.client.onerror = (error) => {
           console.error("[MCP] Client error:", error);
         };
 
-        await this.client.connect(transport);
+      await this.client.connect(transport);
         console.log("[MCP] Successfully connected to MCP server");
         return; // Success, exit retry loop
-      } catch (error) {
+    } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         const cleanMessage = this.cleanErrorMessage(lastError.message);
         console.error(`[MCP] Connection attempt ${attempt} failed:`, cleanMessage);
