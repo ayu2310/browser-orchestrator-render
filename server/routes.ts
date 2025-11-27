@@ -213,6 +213,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         broadcastLog(logEntry);
       };
 
+      // Set replay task as current task so WebSocket can route logs correctly
+      await storage.updateTask(replayTask.id, { status: "running" });
+      
       res.json(replayTask);
 
       setImmediate(async () => {

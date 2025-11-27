@@ -85,8 +85,8 @@ async function testComplexTask() {
   });
 
   try {
-    console.log("Test Task: Navigate to Wikipedia and find AI types");
-    const testPrompt = "Navigate to https://en.wikipedia.org/wiki/Artificial_intelligence, find the section about types of AI, and list at least 3 different AI types mentioned on the page.";
+    console.log("Test Task: Navigate to example.com, find a link, and click it");
+    const testPrompt = "Navigate to https://example.com, find the 'More information...' link, and click it. Then take a screenshot to verify the action worked.";
     
     console.log(`\nExecuting: "${testPrompt}"\n`);
     

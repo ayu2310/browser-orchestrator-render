@@ -34,6 +34,7 @@ export default function Home() {
   const [replayTaskId, setReplayTaskId] = useState<string | null>(null);
   const executionLogsEndRef = useRef<HTMLDivElement>(null);
   const replayLogsEndRef = useRef<HTMLDivElement>(null);
+  const replayTaskIdRef = useRef<string | null>(null);
 
   const { data: tasks = [] } = useQuery<Task[]>({
     queryKey: ["/api/tasks"],
@@ -95,6 +96,7 @@ export default function Home() {
       setCurrentTaskId(null);
       setReplayTaskId(null);
       setOriginalTaskId(null);
+      replayTaskIdRef.current = null;
       queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
       queryClient.invalidateQueries({ queryKey: ["/api/tasks/current"] });
     },
@@ -110,6 +112,7 @@ export default function Home() {
       const originalTaskId = variables;
       setOriginalTaskId(originalTaskId);
       setReplayTaskId(data.id);
+      replayTaskIdRef.current = data.id; // Update ref immediately
       
       try {
         const logsResponse = await fetch(`/api/tasks/${originalTaskId}/logs`);
@@ -160,6 +163,7 @@ export default function Home() {
           setSelectedHistoryTaskId(currentTask.id);
           setReplayTaskId(null);
           setOriginalTaskId(null);
+          replayTaskIdRef.current = null;
           queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
         }, 3000); // Increased delay to ensure replay button is visible
       } else {
@@ -168,6 +172,7 @@ export default function Home() {
           setCurrentTaskId(null);
           setReplayTaskId(null);
           setOriginalTaskId(null);
+          replayTaskIdRef.current = null;
           queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
         }, 2000);
       }
@@ -180,6 +185,7 @@ export default function Home() {
       setReplayLogs([]);
       setOriginalTaskId(null);
       setReplayTaskId(null);
+      replayTaskIdRef.current = null;
     }
   }, [historicalLogs, selectedHistoryTaskId, currentTaskId]);
 
@@ -191,32 +197,8 @@ export default function Home() {
     replayLogsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [replayLogs]);
 
-  // WebSocket for logs (only when there's a current task)
-  useEffect(() => {
-    if (!currentTaskId) return;
 
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
-    const ws = new WebSocket(wsUrl);
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === "log" && data.taskId === currentTaskId) {
-        // Check if this is a replay task by comparing taskId with replayTaskId
-        if (replayTaskId && data.taskId === replayTaskId) {
-          // Add to replay logs
-          setReplayLogs((prev) => [...prev, data.log]);
-        } else {
-          // Add to execution logs
-          setExecutionLogs((prev) => [...prev, data.log]);
-        }
-      }
-    };
-
-    return () => ws.close();
-  }, [currentTaskId, replayTaskId]);
-
-  // Global WebSocket for task updates (always connected)
+  // Global WebSocket for task updates and logs (always connected)
   useEffect(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws`;
@@ -230,6 +212,18 @@ export default function Home() {
           console.log("[UI] Task update received, refreshing tasks list");
           queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
           queryClient.invalidateQueries({ queryKey: ["/api/tasks/current"] });
+        } else if (data.type === "log") {
+          // Handle logs for both execution and replay tasks
+          // Check if this is a replay log using ref (always up-to-date)
+          const isReplayLog = replayTaskIdRef.current && data.taskId === replayTaskIdRef.current;
+          
+          if (isReplayLog) {
+            // Add to replay logs
+            setReplayLogs((prev) => [...prev, data.log]);
+          } else if (data.taskId === currentTaskId) {
+            // Add to execution logs only if it's the current task
+            setExecutionLogs((prev) => [...prev, data.log]);
+          }
         }
       } catch (error) {
         console.error("[UI] Error parsing WebSocket message:", error);
