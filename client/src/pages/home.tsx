@@ -93,11 +93,22 @@ export default function Home() {
       const response = await apiRequest("POST", `/api/tasks/${taskId}/replay`, {});
       return await response.json();
     },
-    onSuccess: (data: Task) => {
+    onSuccess: async (data: Task, variables: string) => {
+      // Load original task logs first, then append replay logs
+      try {
+        const originalTaskId = variables;
+        const logsResponse = await fetch(`/api/tasks/${originalTaskId}/logs`);
+        if (logsResponse.ok) {
+          const originalLogs = await logsResponse.json();
+          setLogs(originalLogs);
+        }
+      } catch (error) {
+        console.error("Failed to load original task logs:", error);
+      }
+      
       setCurrentTaskId(data.id);
       setSelectedHistoryTaskId(null);
       setPrompt("");
-      setLogs([]);
       queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
       queryClient.invalidateQueries({ queryKey: ["/api/tasks/current"] });
     },
@@ -197,7 +208,6 @@ export default function Home() {
       <header className="border-b bg-card">
         <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-semibold">BrowserBase MCP Orchestrator</h1>
             <p className="text-sm text-muted-foreground">AI-powered browser automation agent</p>
           </div>
           <div className="flex items-center gap-2">
