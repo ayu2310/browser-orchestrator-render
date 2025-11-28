@@ -237,6 +237,9 @@ export default function Home() {
 
   // WebSocket for logs (listens for both execution and replay logs)
   useEffect(() => {
+    // Only connect WebSocket if there's an active task (currentTaskId or replayTaskId)
+    if (!currentTaskId && !replayTaskId) return;
+
     // Update refs whenever state changes
     currentTaskIdRef.current = currentTaskId;
     replayTaskIdRef.current = replayTaskId;
