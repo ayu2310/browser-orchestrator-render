@@ -180,14 +180,22 @@ export default function Home() {
           queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
         }, 3000); // Increased delay to ensure replay button is visible
       } else {
-        // If it's a replay task that completed, clear replay state
+        // If it's a replay task that completed, clear ALL state including task history
         setTimeout(() => {
           setCurrentTaskId(null);
           currentTaskIdRef.current = null;
           setReplayTaskId(null);
           replayTaskIdRef.current = null;
           setOriginalTaskId(null);
+          setSelectedHistoryTaskId(null);
+          setExecutionLogs([]);
+          setReplayLogs([]);
+          
+          // Clear task history from query cache (set to empty array)
+          queryClient.setQueryData<Task[]>(["/api/tasks"], []);
+          queryClient.setQueryData<Task | null>(["/api/tasks/current"], null);
           queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/tasks/current"] });
         }, 2000);
       }
     }
@@ -288,6 +296,23 @@ export default function Home() {
         if (data.type === "task_update") {
           // Task was updated, refresh the tasks list
           console.log("[UI] Task update received, refreshing tasks list");
+          queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/tasks/current"] });
+        } else if (data.type === "tasks_cleared") {
+          // All tasks have been cleared after replay - clear UI state immediately
+          console.log("[UI] Tasks cleared message received, clearing all UI state");
+          setCurrentTaskId(null);
+          currentTaskIdRef.current = null;
+          setReplayTaskId(null);
+          replayTaskIdRef.current = null;
+          setOriginalTaskId(null);
+          setSelectedHistoryTaskId(null);
+          setExecutionLogs([]);
+          setReplayLogs([]);
+          
+          // Clear task history from query cache (set to empty array)
+          queryClient.setQueryData<Task[]>(["/api/tasks"], []);
+          queryClient.setQueryData<Task | null>(["/api/tasks/current"], null);
           queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
           queryClient.invalidateQueries({ queryKey: ["/api/tasks/current"] });
         }

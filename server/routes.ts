@@ -335,6 +335,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await storage.clearAllTasks();
           await storage.clearAllLogs();
           
+          // Broadcast task update to notify all clients that tasks have been cleared
+          // Send a special message indicating all tasks are cleared
+          const clearMessage = JSON.stringify({ 
+            type: "tasks_cleared",
+            message: "All tasks and execution data have been cleared after replay"
+          });
+          connectedClients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN) {
+              client.send(clearMessage);
+            }
+          });
+          
           console.log(`[Routes] Replay completed - all tasks, logs, and execution data cleared from memory`);
         } catch (error) {
           await log("error", `Replay failed: ${error instanceof Error ? error.message : "Unknown error"}`);
