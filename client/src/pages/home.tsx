@@ -195,13 +195,37 @@ export default function Home() {
 
   useEffect(() => {
     if (selectedHistoryTaskId && !currentTaskId) {
-      setExecutionLogs(historicalLogs);
+      // Check if the selected task is a replay task (starts with "Replay: ")
+      const selectedTask = tasks.find(t => t.id === selectedHistoryTaskId);
+      const isReplayTask = selectedTask?.prompt?.startsWith("Replay: ");
+      
+      if (isReplayTask) {
+        // For replay tasks, show logs in Replay Logs section
+        setReplayLogs(historicalLogs);
+        setExecutionLogs([]);
+        setReplayTaskId(selectedHistoryTaskId);
+        replayTaskIdRef.current = selectedHistoryTaskId;
+        // Find the original task if we can (look for task with matching prompt without "Replay: " prefix)
+        const originalPrompt = selectedTask?.prompt?.replace(/^Replay: /, "");
+        const originalTask = tasks.find(t => t.prompt === originalPrompt && !t.prompt.startsWith("Replay: "));
+        setOriginalTaskId(originalTask?.id || null);
+      } else {
+        // For regular tasks, show logs in Execution Logs section
+        setExecutionLogs(historicalLogs);
+        setReplayLogs([]);
+        setOriginalTaskId(null);
+        setReplayTaskId(null);
+        replayTaskIdRef.current = null;
+      }
+    } else if (!selectedHistoryTaskId && !currentTaskId) {
+      // Clear logs when no task is selected
+      setExecutionLogs([]);
       setReplayLogs([]);
       setOriginalTaskId(null);
       setReplayTaskId(null);
       replayTaskIdRef.current = null;
     }
-  }, [historicalLogs, selectedHistoryTaskId, currentTaskId]);
+  }, [historicalLogs, selectedHistoryTaskId, currentTaskId, tasks]);
 
   useEffect(() => {
     executionLogsEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -446,7 +470,7 @@ export default function Home() {
               </CardContent>
             </Card>
 
-            {replayTaskId && (
+            {(replayTaskId || (selectedHistoryTaskId && tasks.find(t => t.id === selectedHistoryTaskId)?.prompt?.startsWith("Replay: "))) && (
               <Card>
                 <CardHeader>
                   <div className="flex items-center gap-2">
@@ -458,7 +482,7 @@ export default function Home() {
                   <ScrollArea className="h-96 w-full rounded-md border bg-muted/30 p-4">
                     {replayLogs.length === 0 ? (
                       <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-                        Replay in progress... Logs will appear here.
+                        {replayTaskId ? "Replay in progress... Logs will appear here." : "No replay logs available."}
                       </div>
                     ) : (
                       <div className="space-y-2 font-mono text-sm">
