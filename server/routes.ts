@@ -333,18 +333,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
             result: "Replay completed successfully",
           });
 
-          // Clean up all in-memory data after replay
-          // 1. Clean up replay state from original task (free memory)
+          // Clean up all execution data after replay completes
+          // 1. Clear replay state from original task (free memory - no longer needed after replay)
           await storage.updateTask(task.id, {
             replayState: undefined,
           });
+          console.log(`[Routes] Cleared replayState from original task ${task.id}`);
           
-          // 2. Delete replay task logs (free memory)
-          const replayLogs = await storage.getTaskLogs(replayTask.id);
-          for (const logEntry of replayLogs) {
-            // Note: MemStorage doesn't have deleteLog, but logs are stored in memory
-            // They will be cleared when the service restarts. For now, we mark the task as completed.
-          }
+          // 2. Delete replay task logs from memory (free memory - replay logs are temporary)
+          await storage.deleteLogsForTask(replayTask.id);
+          console.log(`[Routes] Deleted replay task logs for task ${replayTask.id}`);
           
           // 3. Clear current task reference if it's the replay task
           const currentTask = await storage.getCurrentTask();
@@ -354,7 +352,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             });
           }
           
-          console.log(`[Routes] Replay completed, cleaned up replayState from task ${task.id}`);
+          console.log(`[Routes] Replay completed and all execution data cleaned up`);
         } catch (error) {
           await log("error", `Replay failed: ${error instanceof Error ? error.message : "Unknown error"}`);
           await storage.updateTask(replayTask.id, {

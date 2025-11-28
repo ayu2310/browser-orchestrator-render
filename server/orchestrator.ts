@@ -398,6 +398,9 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
       } else {
         console.log("[Orchestrator] No replay state to save");
       }
+      
+      // Note: replayState is saved to task in routes.ts, but we keep it in memory
+      // until the task is updated. After that, it will be cleared when orchestrator is reset.
     }
   }
 }

@@ -471,11 +471,16 @@ export default function Home() {
             </Card>
 
             {(replayTaskId || (selectedHistoryTaskId && tasks.find(t => t.id === selectedHistoryTaskId)?.prompt?.startsWith("Replay: "))) && (
-              <Card>
+              <Card className="border-2 border-primary/20 bg-primary/5">
                 <CardHeader>
                   <div className="flex items-center gap-2">
-                    <RotateCcw className="w-5 h-5" />
-                    <CardTitle className="text-lg">Replay Logs</CardTitle>
+                    <RotateCcw className="w-5 h-5 text-primary" />
+                    <CardTitle className="text-lg text-primary font-semibold">Replay Logs</CardTitle>
+                    {replayLogs.length > 0 && (
+                      <Badge variant="secondary" className="ml-auto">
+                        {replayLogs.length} entries
+                      </Badge>
+                    )}
                   </div>
                 </CardHeader>
                 <CardContent>

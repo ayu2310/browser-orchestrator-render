@@ -10,6 +10,7 @@ export interface IStorage {
   
   addLog(log: Omit<LogEntry, "id">): Promise<LogEntry>;
   getTaskLogs(taskId: string): Promise<LogEntry[]>;
+  deleteLogsForTask(taskId: string): Promise<void>;
 }
 
 export class MemStorage implements IStorage {
@@ -86,6 +87,19 @@ export class MemStorage implements IStorage {
     return Array.from(this.logs.values())
       .filter((log) => log.taskId === taskId)
       .sort((a, b) => a.timestamp - b.timestamp);
+  }
+
+  async deleteLogsForTask(taskId: string): Promise<void> {
+    const logIdsToDelete: string[] = [];
+    // Use Array.from to avoid downlevelIteration requirement
+    Array.from(this.logs.entries()).forEach(([logId, log]) => {
+      if (log.taskId === taskId) {
+        logIdsToDelete.push(logId);
+      }
+    });
+    for (const logId of logIdsToDelete) {
+      this.logs.delete(logId);
+    }
   }
 }
 
