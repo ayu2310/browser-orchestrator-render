@@ -221,9 +221,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await mcpClient.connect();
           await log("info", `Replaying task with session ${sessionId}...`);
 
-          // Reuse the session (deterministic - no new session creation)
-          await mcpClient.createSession(sessionId);
-          await log("success", `Reusing browser session: ${sessionId}`);
+          // Reuse the same sessionId from original execution (critical for deterministic replay)
+          // This sets the sessionId in the MCP client so all subsequent calls use it
+          const reusedSessionId = await mcpClient.createSession(sessionId);
+          await log("success", `Reusing browser session: ${reusedSessionId || sessionId}`);
+          
+          // Verify sessionId is set in client
+          const clientSessionId = mcpClient.getSessionId();
+          if (clientSessionId !== sessionId) {
+            await log("warning", `Session ID mismatch: expected ${sessionId}, got ${clientSessionId}`);
+          }
 
           // Execute all cached actions in exact order (includes navigate, act, extract, screenshot)
           // This preserves the exact sequence from original execution
@@ -241,9 +248,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
             
             await log("info", logMessage);
+            // Ensure sessionId is in arguments for all function calls (critical for session reuse)
+            const actionArgs = { ...action.arguments };
+            // Always use the original sessionId from replay state
+            actionArgs.sessionId = sessionId;
             const actionResult = await mcpClient.callFunction({
               function: action.function,
-              arguments: { ...action.arguments, sessionId },
+              arguments: actionArgs,
             });
             if (actionResult.error) {
               await log("error", `${cleanFunctionName} failed: ${actionResult.error}`);

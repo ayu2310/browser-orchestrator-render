@@ -256,6 +256,7 @@ export default function Home() {
           // Check if this is a replay log (must check first, before execution log check)
           if (currentReplayTaskId && data.taskId === currentReplayTaskId) {
             // Add to replay logs
+            console.log("[UI] Adding replay log:", data.log.message);
             setReplayLogs((prev) => [...prev, data.log]);
           } 
           // Check if this is an execution log (current task, but NOT the replay task)
@@ -470,8 +471,9 @@ export default function Home() {
               </CardContent>
             </Card>
 
-            {(replayTaskId || (selectedHistoryTaskId && tasks.find(t => t.id === selectedHistoryTaskId)?.prompt?.startsWith("Replay: "))) && (
-              <Card className="border-2 border-primary/20 bg-primary/5">
+            {/* Replay Logs Section - Always show when replay is active */}
+            {(replayTaskId || currentTask?.prompt?.startsWith("Replay: ") || (selectedHistoryTaskId && tasks.find(t => t.id === selectedHistoryTaskId)?.prompt?.startsWith("Replay: "))) && (
+              <Card className="border-2 border-primary/30 bg-primary/10 shadow-lg">
                 <CardHeader>
                   <div className="flex items-center gap-2">
                     <RotateCcw className="w-5 h-5 text-primary" />
@@ -487,7 +489,9 @@ export default function Home() {
                   <ScrollArea className="h-96 w-full rounded-md border bg-muted/30 p-4">
                     {replayLogs.length === 0 ? (
                       <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-                        {replayTaskId ? "Replay in progress... Logs will appear here." : "No replay logs available."}
+                        {replayTaskId || currentTask?.prompt?.startsWith("Replay: ") 
+                          ? "Replay in progress... Logs will appear here." 
+                          : "No replay logs available."}
                       </div>
                     ) : (
                       <div className="space-y-2 font-mono text-sm">

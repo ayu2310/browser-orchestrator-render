@@ -21,6 +21,8 @@ export class MemStorage implements IStorage {
   constructor() {
     this.tasks = new Map();
     this.logs = new Map();
+    // Note: This is in-memory storage - all data is ephemeral and cleared on server restart
+    console.log("[Storage] Initialized in-memory storage (ephemeral - cleared on server restart)");
   }
 
   async createTask(prompt: string): Promise<Task> {
