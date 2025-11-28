@@ -261,14 +261,26 @@ export default function Home() {
           const currentReplayTaskId = replayTaskIdRef.current;
           const currentTaskIdValue = currentTaskIdRef.current;
           
+          console.log("[UI] WebSocket log received:", {
+            taskId: data.taskId,
+            replayTaskId: currentReplayTaskId,
+            currentTaskId: currentTaskIdValue,
+            message: data.log?.message?.substring(0, 50)
+          });
+          
           // Check if this is a replay log (must check first, before execution log check)
+          // When replay is active, ALL logs for the replay task go to replay logs
           if (currentReplayTaskId && data.taskId === currentReplayTaskId) {
-            // Add to replay logs
-            setReplayLogs((prev) => [...prev, data.log]);
+            console.log("[UI] Adding to replay logs:", data.log.message);
+            setReplayLogs((prev) => {
+              const updated = [...prev, data.log];
+              console.log("[UI] Replay logs count:", updated.length);
+              return updated;
+            });
           } 
           // Check if this is an execution log (current task, but NOT the replay task)
           else if (currentTaskIdValue && data.taskId === currentTaskIdValue && data.taskId !== currentReplayTaskId) {
-            // Add to execution logs
+            console.log("[UI] Adding to execution logs:", data.log.message);
             setExecutionLogs((prev) => [...prev, data.log]);
           }
         }
@@ -470,38 +482,6 @@ export default function Home() {
               </Card>
             )}
 
-            {replayTaskId && (
-              <Card className="border-2 border-primary/30 bg-primary/10 shadow-lg">
-                <CardHeader>
-                  <div className="flex items-center gap-2">
-                    <RotateCcw className="w-5 h-5 text-primary animate-spin" />
-                    <CardTitle className="text-lg text-primary font-bold">Replay Logs</CardTitle>
-                    {replayLogs.length > 0 && (
-                      <Badge variant="secondary" className="ml-auto">
-                        {replayLogs.length} entries
-                      </Badge>
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <ScrollArea className="h-96 w-full rounded-md border bg-muted/30 p-4">
-                    {replayLogs.length === 0 ? (
-                      <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-                        Replay in progress... Logs will appear here.
-                      </div>
-                    ) : (
-                      <div className="space-y-2 font-mono text-sm">
-                        {replayLogs.map((log) => (
-                          <LogLine key={log.id} log={log} />
-                        ))}
-                        <div ref={replayLogsEndRef} />
-                      </div>
-                    )}
-                  </ScrollArea>
-                </CardContent>
-              </Card>
-            )}
-
             <Card>
               <CardHeader>
                 <div className="flex items-center gap-2">
@@ -526,6 +506,39 @@ export default function Home() {
                 </ScrollArea>
               </CardContent>
             </Card>
+
+            {replayTaskId && (
+              <Card className="border-2 border-primary/40 bg-primary/15 shadow-lg">
+                <CardHeader>
+                  <div className="flex items-center gap-2">
+                    <RotateCcw className="w-5 h-5 text-primary" />
+                    <CardTitle className="text-lg text-primary font-bold">Replay Logs</CardTitle>
+                    <Badge variant="secondary" className="ml-auto">
+                      {replayLogs.length} {replayLogs.length === 1 ? 'entry' : 'entries'}
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <ScrollArea className="h-96 w-full rounded-md border-2 border-primary/20 bg-muted/50 p-4">
+                    {replayLogs.length === 0 ? (
+                      <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+                        <div className="text-center">
+                          <RotateCcw className="w-8 h-8 mx-auto mb-2 text-primary animate-spin" />
+                          <p>Replay in progress... Logs will appear here.</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 font-mono text-sm">
+                        {replayLogs.map((log) => (
+                          <LogLine key={log.id} log={log} />
+                        ))}
+                        <div ref={replayLogsEndRef} />
+                      </div>
+                    )}
+                  </ScrollArea>
+                </CardContent>
+              </Card>
+            )}
           </div>
 
           <div>
