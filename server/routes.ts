@@ -169,6 +169,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
     }
+    
+    // Clear all tasks and logs when task is cancelled
+    await storage.clearAllTasks();
+    await storage.clearAllLogs();
+    currentOrchestrator = null;
+    
+    // Broadcast that tasks have been cleared
+    const clearMessage = JSON.stringify({ 
+      type: "tasks_cleared",
+      message: "All tasks and execution data have been cleared after cancellation"
+    });
+    connectedClients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(clearMessage);
+      }
+    });
+    
     res.json({ success: true });
   });
 
@@ -380,9 +397,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Task not found" });
       }
 
-      // Clean up replay state
-      await storage.updateTask(task.id, {
-        replayState: undefined,
+      // Clear all tasks and logs when replay is cancelled
+      await storage.clearAllTasks();
+      await storage.clearAllLogs();
+      currentOrchestrator = null;
+      
+      // Broadcast that tasks have been cleared
+      const clearMessage = JSON.stringify({ 
+        type: "tasks_cleared",
+        message: "All tasks and execution data have been cleared after replay cancellation"
+      });
+      connectedClients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(clearMessage);
+        }
       });
 
       res.json({ success: true });
@@ -391,6 +419,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         message: error instanceof Error ? error.message : "Failed to cancel replay",
       });
     }
+  });
+
+  // Endpoint to clear all data (called on page refresh/load)
+  app.post("/api/tasks/clear-all", async (_req, res) => {
+    await storage.clearAllTasks();
+    await storage.clearAllLogs();
+    currentOrchestrator = null;
+    
+    // Broadcast that tasks have been cleared
+    const clearMessage = JSON.stringify({ 
+      type: "tasks_cleared",
+      message: "All tasks and execution data have been cleared"
+    });
+    connectedClients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(clearMessage);
+      }
+    });
+    
+    res.json({ success: true });
   });
 
   return httpServer;

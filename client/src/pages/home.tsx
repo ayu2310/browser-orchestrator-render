@@ -37,6 +37,30 @@ export default function Home() {
   const currentTaskIdRef = useRef<string | null>(null);
   const replayTaskIdRef = useRef<string | null>(null);
 
+  // Clear all data on page load/refresh
+  useEffect(() => {
+    const clearAll = async () => {
+      try {
+        await apiRequest("POST", "/api/tasks/clear-all", {});
+        // Clear local state
+        setCurrentTaskId(null);
+        currentTaskIdRef.current = null;
+        setReplayTaskId(null);
+        replayTaskIdRef.current = null;
+        setOriginalTaskId(null);
+        setSelectedHistoryTaskId(null);
+        setExecutionLogs([]);
+        setReplayLogs([]);
+        // Clear query cache
+        queryClient.setQueryData<Task[]>(["/api/tasks"], []);
+        queryClient.setQueryData<Task | null>(["/api/tasks/current"], null);
+      } catch (error) {
+        console.error("[UI] Failed to clear all data on page load:", error);
+      }
+    };
+    clearAll();
+  }, []); // Only run once on mount
+
   const { data: tasks = [] } = useQuery<Task[]>({
     queryKey: ["/api/tasks"],
     refetchInterval: 2000, // Refetch every 2 seconds to catch task updates
