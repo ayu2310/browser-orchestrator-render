@@ -117,6 +117,8 @@ export default function Home() {
       // Load original task logs for execution logs section
       const originalTaskId = variables;
       setOriginalTaskId(originalTaskId);
+      
+      // Set replay task ID FIRST before setting currentTaskId
       setReplayTaskId(data.id);
       replayTaskIdRef.current = data.id;
       
@@ -133,6 +135,8 @@ export default function Home() {
       // Clear replay logs for new replay
       setReplayLogs([]);
       
+      // Set current task ID to replay task ID (so WebSocket connects)
+      // But WebSocket handler will use replayTaskIdRef to distinguish replay logs
       setCurrentTaskId(data.id);
       currentTaskIdRef.current = data.id;
       setSelectedHistoryTaskId(null);
@@ -225,13 +229,13 @@ export default function Home() {
           const currentReplayTaskId = replayTaskIdRef.current;
           const currentTaskIdValue = currentTaskIdRef.current;
           
-          // Check if this is a replay log
+          // Check if this is a replay log (must check first, before execution log check)
           if (currentReplayTaskId && data.taskId === currentReplayTaskId) {
             // Add to replay logs
             setReplayLogs((prev) => [...prev, data.log]);
           } 
-          // Check if this is an execution log (current task, but not replay)
-          else if (currentTaskIdValue && data.taskId === currentTaskIdValue) {
+          // Check if this is an execution log (current task, but NOT the replay task)
+          else if (currentTaskIdValue && data.taskId === currentTaskIdValue && data.taskId !== currentReplayTaskId) {
             // Add to execution logs
             setExecutionLogs((prev) => [...prev, data.log]);
           }
