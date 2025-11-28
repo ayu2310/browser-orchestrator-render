@@ -188,7 +188,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "No replay state available for this task" });
       }
 
-      const { sessionId, url, actions } = task.replayState;
+      const { sessionId, url, pages, actions } = task.replayState;
 
       // Create a new task for the replay
       const replayTask = await storage.createTask(`Replay: ${task.prompt}`);
@@ -225,28 +225,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await mcpClient.createSession(sessionId);
           await log("success", `Reusing browser session: ${sessionId}`);
 
-          // Navigate to the cached URL if available
-          if (url) {
-            await log("info", `Navigating to ${url}...`);
+          // Navigate to all cached pages in order (if pages array exists, use it; otherwise fall back to single url)
+          const pagesToNavigate = pages && pages.length > 0 ? pages : (url ? [url] : []);
+          
+          for (let i = 0; i < pagesToNavigate.length; i++) {
+            const pageUrl = pagesToNavigate[i];
+            await log("info", `Navigating to page ${i + 1}/${pagesToNavigate.length}: ${pageUrl}...`);
             const navigateResult = await mcpClient.callFunction({
               function: "browserbase_stagehand_navigate",
-              arguments: { url, sessionId },
+              arguments: { url: pageUrl, sessionId },
             });
             if (navigateResult.error) {
               throw new Error(`Navigation failed: ${navigateResult.error}`);
             }
-            await log("success", `Navigated to ${url}`);
+            await log("success", `Navigated to ${pageUrl}`);
             
-            // Take screenshot after navigation
-            await log("info", "Taking screenshot after navigation...");
-            const screenshotResult = await mcpClient.callFunction({
-              function: "browserbase_screenshot",
-              arguments: { sessionId },
-            });
-            if (!screenshotResult.error && screenshotResult.screenshot) {
-              await log("info", "Screenshot captured", { screenshot: screenshotResult.screenshot });
-            } else {
-              await log("warning", "Failed to capture screenshot after navigation");
+            // Take screenshot after navigation (only for last page to avoid too many screenshots)
+            if (i === pagesToNavigate.length - 1) {
+              await log("info", "Taking screenshot after navigation...");
+              const screenshotResult = await mcpClient.callFunction({
+                function: "browserbase_screenshot",
+                arguments: { sessionId },
+              });
+              if (!screenshotResult.error && screenshotResult.screenshot) {
+                await log("info", "Screenshot captured", { screenshot: screenshotResult.screenshot });
+              } else {
+                await log("warning", "Failed to capture screenshot after navigation");
+              }
             }
           }
 

@@ -19,7 +19,8 @@ export type LogEntry = z.infer<typeof logEntrySchema>;
 
 export const replayStateSchema = z.object({
   sessionId: z.string(),
-  url: z.string().optional(),
+  url: z.string().optional(), // First/initial URL (for backward compatibility)
+  pages: z.array(z.string()).optional(), // All pages navigated to in order
   actions: z.array(z.object({
     function: z.string(),
     arguments: z.record(z.any()),

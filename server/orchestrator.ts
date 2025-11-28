@@ -21,7 +21,7 @@ export class Orchestrator {
   private tools: any[] = [];
   private cancelled = false;
   private lastScreenshot: string | null = null;
-  private replayState: { sessionId: string; url?: string; actions: Array<{ function: string; arguments: Record<string, any> }> } | null = null;
+  private replayState: { sessionId: string; url?: string; pages?: string[]; actions: Array<{ function: string; arguments: Record<string, any> }> } | null = null;
 
   constructor(config: OrchestratorConfig) {
     this.mcpClient = config.mcpClient;
@@ -112,6 +112,7 @@ export class Orchestrator {
       // Initialize replay state
       this.replayState = {
         sessionId,
+        pages: [],
         actions: [],
       };
 
@@ -229,10 +230,22 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
                 sessionId = result.sessionId;
               }
 
-              // Capture replay state: URL from navigate, actions from act, extract, and screenshot
+              // Capture replay state: URLs from navigate, actions from act, extract, and screenshot
               if (this.replayState) {
                 if (functionName === "browserbase_stagehand_navigate" && functionArgs.url) {
-                  this.replayState.url = functionArgs.url;
+                  // Store first URL for backward compatibility
+                  if (!this.replayState.url) {
+                    this.replayState.url = functionArgs.url;
+                  }
+                  // Store all pages in order
+                  if (!this.replayState.pages) {
+                    this.replayState.pages = [];
+                  }
+                  // Only add if it's a new page (avoid duplicates of consecutive navigations)
+                  if (this.replayState.pages.length === 0 || 
+                      this.replayState.pages[this.replayState.pages.length - 1] !== functionArgs.url) {
+                    this.replayState.pages.push(functionArgs.url);
+                  }
                 }
                 // Capture act, extract, and screenshot calls for replay
                 if (functionName === "browserbase_stagehand_act" || 
