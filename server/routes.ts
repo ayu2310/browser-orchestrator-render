@@ -221,16 +221,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await mcpClient.connect();
           await log("info", `Replaying task with session ${sessionId}...`);
 
-          // Reuse the same sessionId from original execution (critical for deterministic replay)
-          // This sets the sessionId in the MCP client so all subsequent calls use it
-          const reusedSessionId = await mcpClient.createSession(sessionId);
-          await log("success", `Reusing browser session: ${reusedSessionId || sessionId}`);
-          
-          // Verify sessionId is set in client
-          const clientSessionId = mcpClient.getSessionId();
-          if (clientSessionId !== sessionId) {
-            await log("warning", `Session ID mismatch: expected ${sessionId}, got ${clientSessionId}`);
-          }
+          // Reuse the session (deterministic - no new session creation)
+          await mcpClient.createSession(sessionId);
+          await log("success", `Reusing browser session: ${sessionId}`);
 
           // Execute all cached actions in exact order (includes navigate, act, extract, screenshot)
           // This preserves the exact sequence from original execution
@@ -248,13 +241,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
             
             await log("info", logMessage);
-            // Ensure sessionId is in arguments for all function calls (critical for session reuse)
-            const actionArgs = { ...action.arguments };
-            // Always use the original sessionId from replay state
-            actionArgs.sessionId = sessionId;
             const actionResult = await mcpClient.callFunction({
               function: action.function,
-              arguments: actionArgs,
+              arguments: { ...action.arguments, sessionId },
             });
             if (actionResult.error) {
               await log("error", `${cleanFunctionName} failed: ${actionResult.error}`);
@@ -337,33 +326,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await mcpClient.close();
           await log("success", "Replay completed successfully");
 
-          await storage.updateTask(replayTask.id, {
-            status: "completed",
-            completedAt: Date.now(),
-            duration: Date.now() - replayTask.createdAt,
-            result: "Replay completed successfully",
-          });
-
-          // Clean up all execution data after replay completes
-          // 1. Clear replay state from original task (free memory - no longer needed after replay)
-          await storage.updateTask(task.id, {
-            replayState: undefined,
-          });
-          console.log(`[Routes] Cleared replayState from original task ${task.id}`);
-          
-          // 2. Delete replay task logs from memory (free memory - replay logs are temporary)
+          // Clean up ALL execution data after replay completes
+          // This ensures no task history or execution data remains after replay
           await storage.deleteLogsForTask(replayTask.id);
-          console.log(`[Routes] Deleted replay task logs for task ${replayTask.id}`);
+          await storage.deleteLogsForTask(task.id);
           
-          // 3. Clear current task reference if it's the replay task
-          const currentTask = await storage.getCurrentTask();
-          if (currentTask && currentTask.id === replayTask.id) {
-            await storage.updateTask(replayTask.id, {
-              status: "completed",
-            });
-          }
+          // Clear all tasks and logs from memory (no execution data should remain)
+          await storage.clearAllTasks();
+          await storage.clearAllLogs();
           
-          console.log(`[Routes] Replay completed and all execution data cleaned up`);
+          console.log(`[Routes] Replay completed - all tasks, logs, and execution data cleared from memory`);
         } catch (error) {
           await log("error", `Replay failed: ${error instanceof Error ? error.message : "Unknown error"}`);
           await storage.updateTask(replayTask.id, {

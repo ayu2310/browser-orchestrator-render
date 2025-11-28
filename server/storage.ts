@@ -11,6 +11,8 @@ export interface IStorage {
   addLog(log: Omit<LogEntry, "id">): Promise<LogEntry>;
   getTaskLogs(taskId: string): Promise<LogEntry[]>;
   deleteLogsForTask(taskId: string): Promise<void>;
+  clearAllTasks(): Promise<void>;
+  clearAllLogs(): Promise<void>;
 }
 
 export class MemStorage implements IStorage {
@@ -21,8 +23,6 @@ export class MemStorage implements IStorage {
   constructor() {
     this.tasks = new Map();
     this.logs = new Map();
-    // Note: This is in-memory storage - all data is ephemeral and cleared on server restart
-    console.log("[Storage] Initialized in-memory storage (ephemeral - cleared on server restart)");
   }
 
   async createTask(prompt: string): Promise<Task> {
@@ -102,6 +102,15 @@ export class MemStorage implements IStorage {
     for (const logId of logIdsToDelete) {
       this.logs.delete(logId);
     }
+  }
+
+  async clearAllTasks(): Promise<void> {
+    this.tasks.clear();
+    this.currentTaskId = null;
+  }
+
+  async clearAllLogs(): Promise<void> {
+    this.logs.clear();
   }
 }
 

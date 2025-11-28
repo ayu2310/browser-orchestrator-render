@@ -256,7 +256,6 @@ export default function Home() {
           // Check if this is a replay log (must check first, before execution log check)
           if (currentReplayTaskId && data.taskId === currentReplayTaskId) {
             // Add to replay logs
-            console.log("[UI] Adding replay log:", data.log.message);
             setReplayLogs((prev) => [...prev, data.log]);
           } 
           // Check if this is an execution log (current task, but NOT the replay task)
@@ -446,6 +445,38 @@ export default function Home() {
               </Card>
             )}
 
+            {replayTaskId && (
+              <Card className="border-2 border-primary/30 bg-primary/10 shadow-lg">
+                <CardHeader>
+                  <div className="flex items-center gap-2">
+                    <RotateCcw className="w-5 h-5 text-primary animate-spin" />
+                    <CardTitle className="text-lg text-primary font-bold">Replay Logs</CardTitle>
+                    {replayLogs.length > 0 && (
+                      <Badge variant="secondary" className="ml-auto">
+                        {replayLogs.length} entries
+                      </Badge>
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <ScrollArea className="h-96 w-full rounded-md border bg-muted/30 p-4">
+                    {replayLogs.length === 0 ? (
+                      <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+                        Replay in progress... Logs will appear here.
+                      </div>
+                    ) : (
+                      <div className="space-y-2 font-mono text-sm">
+                        {replayLogs.map((log) => (
+                          <LogLine key={log.id} log={log} />
+                        ))}
+                        <div ref={replayLogsEndRef} />
+                      </div>
+                    )}
+                  </ScrollArea>
+                </CardContent>
+              </Card>
+            )}
+
             <Card>
               <CardHeader>
                 <div className="flex items-center gap-2">
@@ -470,41 +501,6 @@ export default function Home() {
                 </ScrollArea>
               </CardContent>
             </Card>
-
-            {/* Replay Logs Section - Always show when replay is active */}
-            {(replayTaskId || currentTask?.prompt?.startsWith("Replay: ") || (selectedHistoryTaskId && tasks.find(t => t.id === selectedHistoryTaskId)?.prompt?.startsWith("Replay: "))) && (
-              <Card className="border-2 border-primary/30 bg-primary/10 shadow-lg">
-                <CardHeader>
-                  <div className="flex items-center gap-2">
-                    <RotateCcw className="w-5 h-5 text-primary" />
-                    <CardTitle className="text-lg text-primary font-semibold">Replay Logs</CardTitle>
-                    {replayLogs.length > 0 && (
-                      <Badge variant="secondary" className="ml-auto">
-                        {replayLogs.length} entries
-                      </Badge>
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <ScrollArea className="h-96 w-full rounded-md border bg-muted/30 p-4">
-                    {replayLogs.length === 0 ? (
-                      <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-                        {replayTaskId || currentTask?.prompt?.startsWith("Replay: ") 
-                          ? "Replay in progress... Logs will appear here." 
-                          : "No replay logs available."}
-                      </div>
-                    ) : (
-                      <div className="space-y-2 font-mono text-sm">
-                        {replayLogs.map((log) => (
-                          <LogLine key={log.id} log={log} />
-                        ))}
-                        <div ref={replayLogsEndRef} />
-                      </div>
-                    )}
-                  </ScrollArea>
-                </CardContent>
-              </Card>
-            )}
           </div>
 
           <div>
