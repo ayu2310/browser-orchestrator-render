@@ -268,8 +268,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             } else {
               await log("success", `${cleanFunctionName} completed successfully`);
               
-              // Take screenshot after action if it's an act function
-              if (action.function === "browserbase_stagehand_act") {
+              // Capture screenshot from result if available
+              if (actionResult.screenshot) {
+                await log("info", "Screenshot captured", { screenshot: actionResult.screenshot });
+              }
+              
+              // Take screenshot after act function if not already captured
+              if (action.function === "browserbase_stagehand_act" && !actionResult.screenshot) {
                 await log("info", "Taking screenshot after action...");
                 const screenshotResult = await mcpClient.callFunction({
                   function: "browserbase_screenshot",

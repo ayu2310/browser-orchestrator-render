@@ -229,12 +229,15 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
                 sessionId = result.sessionId;
               }
 
-              // Capture replay state: URL from navigate, actions from act
+              // Capture replay state: URL from navigate, actions from act, extract, and screenshot
               if (this.replayState) {
                 if (functionName === "browserbase_stagehand_navigate" && functionArgs.url) {
                   this.replayState.url = functionArgs.url;
                 }
-                if (functionName === "browserbase_stagehand_act") {
+                // Capture act, extract, and screenshot calls for replay
+                if (functionName === "browserbase_stagehand_act" || 
+                    functionName === "browserbase_stagehand_extract" || 
+                    functionName === "browserbase_screenshot") {
                   // Store the action for replay (without sessionId to avoid duplication)
                   const actionArgs = { ...functionArgs };
                   delete actionArgs.sessionId;
