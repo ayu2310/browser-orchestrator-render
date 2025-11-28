@@ -225,37 +225,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await mcpClient.createSession(sessionId);
           await log("success", `Reusing browser session: ${sessionId}`);
 
-          // Navigate to all cached pages in order (if pages array exists, use it; otherwise fall back to single url)
-          const pagesToNavigate = pages && pages.length > 0 ? pages : (url ? [url] : []);
-          
-          for (let i = 0; i < pagesToNavigate.length; i++) {
-            const pageUrl = pagesToNavigate[i];
-            await log("info", `Navigating to page ${i + 1}/${pagesToNavigate.length}: ${pageUrl}...`);
-            const navigateResult = await mcpClient.callFunction({
-              function: "browserbase_stagehand_navigate",
-              arguments: { url: pageUrl, sessionId },
-            });
-            if (navigateResult.error) {
-              throw new Error(`Navigation failed: ${navigateResult.error}`);
-            }
-            await log("success", `Navigated to ${pageUrl}`);
-            
-            // Take screenshot after navigation (only for last page to avoid too many screenshots)
-            if (i === pagesToNavigate.length - 1) {
-              await log("info", "Taking screenshot after navigation...");
-              const screenshotResult = await mcpClient.callFunction({
-                function: "browserbase_screenshot",
-                arguments: { sessionId },
-              });
-              if (!screenshotResult.error && screenshotResult.screenshot) {
-                await log("info", "Screenshot captured", { screenshot: screenshotResult.screenshot });
-              } else {
-                await log("warning", "Failed to capture screenshot after navigation");
-              }
-            }
-          }
-
-          // Execute all cached actions deterministically
+          // Execute all cached actions in exact order (includes navigate, act, extract, screenshot)
+          // This preserves the exact sequence from original execution
           for (const action of actions) {
             // Clean function name for UI display
             const cleanFunctionName = action.function
@@ -263,66 +234,89 @@ export async function registerRoutes(app: Express): Promise<Server> {
               .replace(/^stagehand_/i, "")
               .replace(/_/g, " ");
             
-            await log("info", `Replaying action: ${cleanFunctionName}...`);
+            // Determine log message based on function type
+            let logMessage = `Replaying ${cleanFunctionName}...`;
+            if (action.function === "browserbase_stagehand_navigate" && action.arguments.url) {
+              logMessage = `Navigating to ${action.arguments.url}...`;
+            }
+            
+            await log("info", logMessage);
             const actionResult = await mcpClient.callFunction({
               function: action.function,
               arguments: { ...action.arguments, sessionId },
             });
             if (actionResult.error) {
-              await log("error", `Action failed: ${actionResult.error}`);
+              await log("error", `${cleanFunctionName} failed: ${actionResult.error}`);
             } else {
-              // Log success with response details
-              let responseMessage = `${cleanFunctionName} completed successfully`;
-              const responseDetails: any = {};
-              
-              // Capture screenshot from result if available
-              if (actionResult.screenshot) {
-                responseDetails.screenshot = actionResult.screenshot;
-                await log("info", "Screenshot captured", { screenshot: actionResult.screenshot });
-              }
-              
-              // Capture result text/content from function response
-              // The result object may have a 'result' property with text content
-              if (actionResult.result) {
-                if (typeof actionResult.result === 'string' && actionResult.result.length > 0) {
-                  // Limit text to 1000 chars for display
-                  responseDetails.response = actionResult.result.length > 1000 
-                    ? actionResult.result.substring(0, 1000) + "..." 
-                    : actionResult.result;
-                } else if (typeof actionResult.result === 'object' && actionResult.result !== null) {
-                  // If result is an object, try to extract meaningful data
-                  try {
-                    const resultStr = JSON.stringify(actionResult.result, null, 2);
-                    responseDetails.response = resultStr.length > 1000 
-                      ? resultStr.substring(0, 1000) + "..." 
-                      : resultStr;
-                  } catch (e) {
-                    // If JSON.stringify fails, just use string representation
-                    responseDetails.response = String(actionResult.result).substring(0, 1000);
-                  }
-                }
-              }
-              
-              // Log the response with details if available
-              if (Object.keys(responseDetails).length > 0 && !responseDetails.screenshot) {
-                // Only log details if there's something other than screenshot
-                await log("success", responseMessage, responseDetails);
-              } else if (Object.keys(responseDetails).length > 0) {
-                // If only screenshot, log success without details (screenshot already logged separately)
-                await log("success", responseMessage);
-              } else {
-                await log("success", responseMessage);
-              }
-              
-              // Take screenshot after act function if not already captured
-              if (action.function === "browserbase_stagehand_act" && !actionResult.screenshot) {
-                await log("info", "Taking screenshot after action...");
+              // For navigate, log success with URL
+              if (action.function === "browserbase_stagehand_navigate" && action.arguments.url) {
+                await log("success", `Navigated to ${action.arguments.url}`);
+                
+                // Take screenshot after navigation
+                await log("info", "Taking screenshot after navigation...");
                 const screenshotResult = await mcpClient.callFunction({
                   function: "browserbase_screenshot",
                   arguments: { sessionId },
                 });
                 if (!screenshotResult.error && screenshotResult.screenshot) {
                   await log("info", "Screenshot captured", { screenshot: screenshotResult.screenshot });
+                } else {
+                  await log("warning", "Failed to capture screenshot after navigation");
+                }
+              } else {
+                // Log success with response details
+                let responseMessage = `${cleanFunctionName} completed successfully`;
+                const responseDetails: any = {};
+                
+                // Capture screenshot from result if available
+                if (actionResult.screenshot) {
+                  responseDetails.screenshot = actionResult.screenshot;
+                  await log("info", "Screenshot captured", { screenshot: actionResult.screenshot });
+                }
+                
+                // Capture result text/content from function response
+                // The result object may have a 'result' property with text content
+                if (actionResult.result) {
+                  if (typeof actionResult.result === 'string' && actionResult.result.length > 0) {
+                    // Limit text to 1000 chars for display
+                    responseDetails.response = actionResult.result.length > 1000 
+                      ? actionResult.result.substring(0, 1000) + "..." 
+                      : actionResult.result;
+                  } else if (typeof actionResult.result === 'object' && actionResult.result !== null) {
+                    // If result is an object, try to extract meaningful data
+                    try {
+                      const resultStr = JSON.stringify(actionResult.result, null, 2);
+                      responseDetails.response = resultStr.length > 1000 
+                        ? resultStr.substring(0, 1000) + "..." 
+                        : resultStr;
+                    } catch (e) {
+                      // If JSON.stringify fails, just use string representation
+                      responseDetails.response = String(actionResult.result).substring(0, 1000);
+                    }
+                  }
+                }
+                
+                // Log the response with details if available
+                if (Object.keys(responseDetails).length > 0 && !responseDetails.screenshot) {
+                  // Only log details if there's something other than screenshot
+                  await log("success", responseMessage, responseDetails);
+                } else if (Object.keys(responseDetails).length > 0) {
+                  // If only screenshot, log success without details (screenshot already logged separately)
+                  await log("success", responseMessage);
+                } else {
+                  await log("success", responseMessage);
+                }
+                
+                // Take screenshot after act function if not already captured
+                if (action.function === "browserbase_stagehand_act" && !actionResult.screenshot) {
+                  await log("info", "Taking screenshot after action...");
+                  const screenshotResult = await mcpClient.callFunction({
+                    function: "browserbase_screenshot",
+                    arguments: { sessionId },
+                  });
+                  if (!screenshotResult.error && screenshotResult.screenshot) {
+                    await log("info", "Screenshot captured", { screenshot: screenshotResult.screenshot });
+                  }
                 }
               }
             }

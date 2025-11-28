@@ -230,14 +230,16 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
                 sessionId = result.sessionId;
               }
 
-              // Capture replay state: URLs from navigate, actions from act, extract, and screenshot
+              // Capture replay state: ALL function calls in exact execution order
+              // This preserves the sequence: navigate -> act -> extract -> navigate -> etc.
               if (this.replayState) {
+                // Capture navigate calls
                 if (functionName === "browserbase_stagehand_navigate" && functionArgs.url) {
                   // Store first URL for backward compatibility
                   if (!this.replayState.url) {
                     this.replayState.url = functionArgs.url;
                   }
-                  // Store all pages in order
+                  // Store all pages in order (for backward compatibility)
                   if (!this.replayState.pages) {
                     this.replayState.pages = [];
                   }
@@ -246,11 +248,19 @@ ${this.tools.length > 0 ? JSON.stringify(this.tools, null, 2) : "No tools curren
                       this.replayState.pages[this.replayState.pages.length - 1] !== functionArgs.url) {
                     this.replayState.pages.push(functionArgs.url);
                   }
+                  
+                  // Store navigate call in actions array to preserve order
+                  const actionArgs = { ...functionArgs };
+                  delete actionArgs.sessionId;
+                  this.replayState.actions.push({
+                    function: functionName,
+                    arguments: actionArgs,
+                  });
                 }
                 // Capture act, extract, and screenshot calls for replay
-                if (functionName === "browserbase_stagehand_act" || 
-                    functionName === "browserbase_stagehand_extract" || 
-                    functionName === "browserbase_screenshot") {
+                else if (functionName === "browserbase_stagehand_act" || 
+                         functionName === "browserbase_stagehand_extract" || 
+                         functionName === "browserbase_screenshot") {
                   // Store the action for replay (without sessionId to avoid duplication)
                   const actionArgs = { ...functionArgs };
                   delete actionArgs.sessionId;

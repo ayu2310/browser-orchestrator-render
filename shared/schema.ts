@@ -20,11 +20,11 @@ export type LogEntry = z.infer<typeof logEntrySchema>;
 export const replayStateSchema = z.object({
   sessionId: z.string(),
   url: z.string().optional(), // First/initial URL (for backward compatibility)
-  pages: z.array(z.string()).optional(), // All pages navigated to in order
+  pages: z.array(z.string()).optional(), // All pages navigated to in order (deprecated, use actions)
   actions: z.array(z.object({
     function: z.string(),
     arguments: z.record(z.any()),
-  })),
+  })), // All function calls in exact execution order (navigate, act, extract, screenshot, etc.)
 });
 export type ReplayState = z.infer<typeof replayStateSchema>;
 
