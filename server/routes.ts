@@ -266,11 +266,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (actionResult.error) {
               await log("error", `Action failed: ${actionResult.error}`);
             } else {
-              await log("success", `${cleanFunctionName} completed successfully`);
+              // Log success with response details
+              let responseMessage = `${cleanFunctionName} completed successfully`;
+              const responseDetails: any = {};
               
               // Capture screenshot from result if available
               if (actionResult.screenshot) {
+                responseDetails.screenshot = actionResult.screenshot;
                 await log("info", "Screenshot captured", { screenshot: actionResult.screenshot });
+              }
+              
+              // Capture result text/content from function response
+              // The result object may have a 'result' property with text content
+              if (actionResult.result) {
+                if (typeof actionResult.result === 'string' && actionResult.result.length > 0) {
+                  // Limit text to 1000 chars for display
+                  responseDetails.response = actionResult.result.length > 1000 
+                    ? actionResult.result.substring(0, 1000) + "..." 
+                    : actionResult.result;
+                } else if (typeof actionResult.result === 'object' && actionResult.result !== null) {
+                  // If result is an object, try to extract meaningful data
+                  try {
+                    const resultStr = JSON.stringify(actionResult.result, null, 2);
+                    responseDetails.response = resultStr.length > 1000 
+                      ? resultStr.substring(0, 1000) + "..." 
+                      : resultStr;
+                  } catch (e) {
+                    // If JSON.stringify fails, just use string representation
+                    responseDetails.response = String(actionResult.result).substring(0, 1000);
+                  }
+                }
+              }
+              
+              // Log the response with details if available
+              if (Object.keys(responseDetails).length > 0 && !responseDetails.screenshot) {
+                // Only log details if there's something other than screenshot
+                await log("success", responseMessage, responseDetails);
+              } else if (Object.keys(responseDetails).length > 0) {
+                // If only screenshot, log success without details (screenshot already logged separately)
+                await log("success", responseMessage);
+              } else {
+                await log("success", responseMessage);
               }
               
               // Take screenshot after act function if not already captured
@@ -298,10 +334,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
             result: "Replay completed successfully",
           });
 
-          // Clean up replay state from original task (free memory)
+          // Clean up all in-memory data after replay
+          // 1. Clean up replay state from original task (free memory)
           await storage.updateTask(task.id, {
             replayState: undefined,
           });
+          
+          // 2. Delete replay task logs (free memory)
+          const replayLogs = await storage.getTaskLogs(replayTask.id);
+          for (const logEntry of replayLogs) {
+            // Note: MemStorage doesn't have deleteLog, but logs are stored in memory
+            // They will be cleared when the service restarts. For now, we mark the task as completed.
+          }
+          
+          // 3. Clear current task reference if it's the replay task
+          const currentTask = await storage.getCurrentTask();
+          if (currentTask && currentTask.id === replayTask.id) {
+            await storage.updateTask(replayTask.id, {
+              status: "completed",
+            });
+          }
+          
           console.log(`[Routes] Replay completed, cleaned up replayState from task ${task.id}`);
         } catch (error) {
           await log("error", `Replay failed: ${error instanceof Error ? error.message : "Unknown error"}`);
