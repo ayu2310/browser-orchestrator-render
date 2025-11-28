@@ -276,6 +276,9 @@ export class McpClient {
 
   /**
    * Create a new browser session or reuse an existing one for replay
+   * 
+   * IMPORTANT: To reuse a session, you must call browserbase_session_create with the sessionId
+   * This tells the MCP server to reuse that session. Just setting sessionId in arguments isn't enough.
    */
   async createSession(replaySessionId?: string): Promise<string> {
     try {
@@ -287,13 +290,38 @@ export class McpClient {
         throw new Error("Failed to connect to MCP server");
       }
 
-      // If replaySessionId is provided, use it directly (for replay mode)
+      // If replaySessionId is provided, call session_create with it to reuse the session
       if (replaySessionId) {
-        this.sessionId = replaySessionId;
-        console.log("[MCP] Reusing session for replay:", replaySessionId);
-        return replaySessionId;
+        console.log("[MCP] Attempting to reuse session:", replaySessionId);
+        
+        // Call browserbase_session_create with the existing sessionId to reuse it
+        const result = await this.client.callTool({
+          name: "browserbase_session_create",
+          arguments: {
+            sessionId: replaySessionId, // Pass sessionId to reuse existing session
+          },
+        });
+
+        // Extract sessionId from response to verify it's the same
+        const returnedSessionId = this.extractSessionId((result.content as any[]) || []);
+        if (returnedSessionId && returnedSessionId === replaySessionId) {
+          this.sessionId = returnedSessionId;
+          console.log("[MCP] Session reused successfully:", returnedSessionId);
+          return returnedSessionId;
+        } else if (returnedSessionId) {
+          // If we got a different sessionId, that means a new session was created
+          console.warn(`[MCP] Expected to reuse session ${replaySessionId}, but got new session ${returnedSessionId}`);
+          this.sessionId = returnedSessionId;
+          return returnedSessionId;
+        } else {
+          // Fallback: just set the sessionId in client (may not work for all MCP servers)
+          console.warn("[MCP] Could not extract sessionId from reuse response, using provided sessionId");
+          this.sessionId = replaySessionId;
+          return replaySessionId;
+        }
       }
 
+      // Create a new session
       const result = await this.client.callTool({
         name: "browserbase_session_create",
         arguments: {},
